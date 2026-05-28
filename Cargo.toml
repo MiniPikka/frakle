@@ -1,0 +1,18 @@
+[package]
+name = "frakle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uefi = { version = "0.37", features = ["alloc", "global_allocator", "logger"] }
+
+
+embedded-graphics = "0.8"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1

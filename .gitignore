@@ -1,0 +1,13 @@
+# Build artifacts
+target/
+test_fat.img
+test_image/
+
+# Editor
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
