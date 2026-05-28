@@ -12,7 +12,7 @@
 
 - **Bare-metal UEFI application** — boots directly from the UEFI Shell, no OS needed
 - **Pixel-perfect graphical UI** — dice, scoreboard, buttons, and particle effects
-- **Single-player vs AI** — smart rule-based opponent ("Lucky")
+- **Single-player vs computer** — smart rule-based opponent ("Lucky")
 - **Bilingual UI** — English / Chinese (pinyin), toggle with `L` key
 - **Particle effects** — score explosions, farkle screen shake, victory confetti
 - **PC Speaker sound** — non-blocking cooperative beeps (requires QEMU with `-machine pcspk-audiodev`)
@@ -73,7 +73,7 @@ Full details: [`tech-stack.md`](tech-stack.md)
 frakle/
 ├── src/
 │   ├── main.rs            # UEFI entry point, game loop
-│   ├── game.rs            # Farkle rules engine, AI, meld detection
+│   ├── game.rs            # Farkle rules engine, computer opponent, meld detection
 │   ├── framebuffer.rs     # GOP double-buffer, embedded-graphics DrawTarget
 │   ├── input.rs           # Keyboard polling (UEFI SimpleTextIn)
 │   ├── effects.rs         # Particle system, screen shake, victory effects
