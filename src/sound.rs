@@ -36,6 +36,10 @@ pub struct SoundQueue {
     note_started: bool,
 }
 
+impl Default for SoundQueue {
+    fn default() -> Self { Self::new() }
+}
+
 impl SoundQueue {
     pub fn new() -> Self {
         Self { notes: &[], note_idx: 0, elapsed_us: 0, note_started: false }

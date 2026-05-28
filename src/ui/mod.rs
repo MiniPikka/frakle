@@ -19,7 +19,6 @@ use crate::framebuffer::{
 };
 use crate::game::{Game, GamePhase, TurnPhase};
 
-extern crate alloc;
 use alloc::format;
 
 pub fn render(fb: &mut Framebuffer, game: &Game) {
@@ -150,7 +149,9 @@ fn render_ai_turn_detail(fb: &mut Framebuffer, game: &Game, show_meld: bool, l: 
 
     if game.turn_score > 0 {
         let style = MonoTextStyle::new(&FONT_9X15, COLOR_TURN_SCORE);
-        let turn_text = format!("Lucky turn: {}", game.turn_score);
+        let turn_text = l.ai_turn_score
+            .replace("{n}", game.players[1].name)
+            .replace("{s}", &format!("{}", game.turn_score));
         let _ = Text::with_alignment(&turn_text, Point::new(w / 2, layout::turn_info_y(h)), style, Alignment::Center).draw(fb);
     }
 

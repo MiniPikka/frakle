@@ -1,5 +1,13 @@
-extern crate alloc;
-use alloc::vec::Vec;
+/// Collect dice values matching a predicate into a fixed-size array.
+/// Returns (array, count). At most 6 elements.
+fn collect_dice<F: Fn(usize) -> bool>(dice: &[u8; 6], pred: F) -> ([u8; 6], usize) {
+    let mut out = [0u8; 6];
+    let mut n = 0;
+    for i in 0..6 {
+        if pred(i) { out[n] = dice[i]; n += 1; }
+    }
+    (out, n)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum GamePhase {
@@ -113,18 +121,16 @@ impl Game {
     }
 
     pub fn is_farkle(&self) -> bool {
-        let unheld: Vec<u8> = (0..6).filter(|&i| !self.held_dice[i]).map(|i| self.dice[i]).collect();
-        find_all_melds(&unheld).is_empty()
+        let (unheld, n) = collect_dice(&self.dice, |i| !self.held_dice[i]);
+        find_all_melds(&unheld[..n]).is_empty()
     }
 
     pub fn check_selection_is_valid_meld(&self) -> Option<u32> {
-        let selected_vals: Vec<u8> = (0..6)
-            .filter(|&i| self.selected_dice[i] && !self.held_dice[i])
-            .map(|i| self.dice[i]).collect();
-        if selected_vals.is_empty() { return None; }
-        find_meld_score(&selected_vals).or_else(|| {
-            let all_unheld: Vec<u8> = (0..6).filter(|&i| !self.held_dice[i]).map(|i| self.dice[i]).collect();
-            find_meld_score(&all_unheld).filter(|_| (0..6).all(|i| self.held_dice[i] || self.selected_dice[i]))
+        let (selected_vals, n) = collect_dice(&self.dice, |i| self.selected_dice[i] && !self.held_dice[i]);
+        if n == 0 { return None; }
+        find_meld_score(&selected_vals[..n]).or_else(|| {
+            let (all_unheld, m) = collect_dice(&self.dice, |i| !self.held_dice[i]);
+            find_meld_score(&all_unheld[..m]).filter(|_| (0..6).all(|i| self.held_dice[i] || self.selected_dice[i]))
         })
     }
 
@@ -174,13 +180,18 @@ impl Game {
     }
 }
 
+impl Default for Game {
+    fn default() -> Self { Self::new() }
+}
+
 pub fn ai_decide(game: &Game) -> AiAction {
-    let unheld: Vec<u8> = (0..6).filter(|&i| !game.held_dice[i]).map(|i| game.dice[i]).collect();
-    let melds = find_all_melds(&unheld);
+    let (unheld, n) = collect_dice(&game.dice, |i| !game.held_dice[i]);
+    let unheld_slice = &unheld[..n];
+    let melds = find_all_melds(unheld_slice);
     if melds.is_empty() { return AiAction::Farkle; }
     let best = melds.iter().max_by_key(|m| m.score).unwrap();
     let score_after = game.turn_score + best.score;
-    let remaining = unheld.len() - best.indices_len;
+    let remaining = n - best.indices_len;
     let should_bank = game.turn_score > 0
         && (score_after >= 500 || remaining <= 1
             || game.players[game.current_player].total_score + score_after >= 5000
@@ -211,8 +222,15 @@ pub fn find_all_melds(dice: &[u8]) -> MeldList {
         melds.push(MeldInfo { indices, indices_len: n, score: 1500, description: "Three Pairs" });
     }
 
-    let triplet_vals: Vec<usize> = (1..=6).filter(|&v| counts[v] >= 3).collect();
-    if triplet_vals.len() >= 2 {
+    let mut triplet_vals = [0usize; 2];
+    let mut triplet_count = 0;
+    for v in 1..=6 {
+        if triplet_count < 2 && counts[v] >= 3 {
+            triplet_vals[triplet_count] = v;
+            triplet_count += 1;
+        }
+    }
+    if triplet_count >= 2 {
         let (v1, v2) = (triplet_vals[0], triplet_vals[1]);
         let mut indices = [0usize; 6];
         let (mut idx, mut c1, mut c2) = (0, 0, 0);

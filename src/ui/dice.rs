@@ -98,13 +98,14 @@ pub fn draw_roll_animation(fb: &mut Framebuffer, game: &Game, frame: u32, _total
     let dice_y = layout::dice_row_y(fb.height() as i32);
     let seed = frame.wrapping_mul(0x9E3779B9).wrapping_add(0xDEADBEEF);
     for i in 0..6 {
-        if game.held_dice[i] {
-            continue;
-        }
         let x = layout::die_x(i, fb_width);
-        let y = dice_y;
-        let val = ((seed >> (i * 5)) & 0x7) as u8 + 1;
-        let v = if val > 6 { ((val - 1) % 6) + 1 } else { val };
-        draw_die(fb, x, y, v, false, false, false);
+        if game.held_dice[i] {
+            // Show held dice in dimmed state so player can see what's set aside
+            draw_die(fb, x, dice_y, game.dice[i], true, false, false);
+        } else {
+            let val = ((seed >> (i * 5)) & 0x7) as u8 + 1;
+            let v = if val > 6 { ((val - 1) % 6) + 1 } else { val };
+            draw_die(fb, x, dice_y, v, false, false, false);
+        }
     }
 }

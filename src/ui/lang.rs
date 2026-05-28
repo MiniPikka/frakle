@@ -21,6 +21,7 @@ pub struct Lang<'a> {
     pub press_restart: &'a str,
     pub ai_think: &'a str,
     pub ai_roll: &'a str,
+    pub ai_turn_score: &'a str,
 }
 
 pub const LANG_EN: Lang<'static> = Lang {
@@ -42,6 +43,7 @@ pub const LANG_EN: Lang<'static> = Lang {
     press_restart: "Press ENTER to Play Again",
     ai_think: "{n} is thinking...",
     ai_roll: "{n} is rolling...",
+    ai_turn_score: "{n} turn: {s}",
 };
 
 pub const LANG_CN: Lang<'static> = Lang {
@@ -63,6 +65,7 @@ pub const LANG_CN: Lang<'static> = Lang {
     press_restart: "\u{6309} ENTER \u{91CD}\u{6765}",
     ai_think: "{n} \u{601D}\u{8003}\u{4E2D}...",
     ai_roll: "{n} \u{63B7}\u{9AB0}\u{4E2D}...",
+    ai_turn_score: "{n} \u{5206}: {s}",
 };
 
 pub fn lang(cn_mode: bool) -> &'static Lang<'static> {
