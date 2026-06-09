@@ -18,8 +18,9 @@ use crate::framebuffer::{
     COLOR_DICE_PIP, COLOR_FARKLE, COLOR_TEXT, COLOR_TITLE, COLOR_TURN_SCORE,
 };
 use crate::game::{Game, GamePhase, TurnPhase};
+use crate::{FmtBuf, fmt_replace};
 
-use alloc::format;
+use core::fmt::Write;
 
 pub fn render(fb: &mut Framebuffer, game: &Game) {
     fb.clear(COLOR_BG);
@@ -94,14 +95,18 @@ fn render_player_turn(fb: &mut Framebuffer, game: &Game, phase: TurnPhase, l: &l
             render_action_buttons(fb, game, l);
 
             if game.selected_dice.iter().any(|&s| s) {
-                let (msg, color) = if let Some(score) = game.check_selection_is_valid_meld() {
-                    (l.select_meld.replace("{s}", &format!("{}", score)),
-                     Rgb888::new(0xF0, 0xC0, 0x40))
+                let meld_score = game.check_selection_is_valid_meld();
+                let (color, msg_text) = if let Some(score) = meld_score {
+                    let mut sbuf = FmtBuf::<16>::new();
+                    let _ = write!(sbuf, "{}", score);
+                    let mut msg = FmtBuf::<64>::new();
+                    fmt_replace(&mut msg, l.select_meld, sbuf.as_str(), "", "", "");
+                    (Rgb888::new(0xF0, 0xC0, 0x40), msg)
                 } else {
-                    (alloc::string::String::from(l.invalid_meld),
-                     Rgb888::new(0xFF, 0x66, 0x66))
+                    (Rgb888::new(0xFF, 0x66, 0x66), FmtBuf::<64>::new())
                 };
-                draw_text_center(fb, game, &msg, w / 2, layout::flash_msg_y(h), color, &FONT_9X15);
+                let text = if meld_score.is_some() { msg_text.as_str() } else { l.invalid_meld };
+                draw_text_center(fb, game, text, w / 2, layout::flash_msg_y(h), color, &FONT_9X15);
             }
         }
         TurnPhase::Farkle { .. } => {
@@ -127,39 +132,44 @@ fn render_ai_turn_detail(fb: &mut Framebuffer, game: &Game, show_meld: bool, l: 
     let h = fb.height() as i32;
 
     if show_meld && !game.ai_meld_name.is_empty() {
-        let msg = if game.ai_meld_points > 0 {
-            format!("{}: {} (+{})", game.players[1].name, game.ai_meld_name, game.ai_meld_points)
+        let mut msg = FmtBuf::<64>::new();
+        if game.ai_meld_points > 0 {
+            let _ = write!(msg, "{}: {} (+{})", game.players[1].name, game.ai_meld_name, game.ai_meld_points);
         } else {
-            format!("{} Farkled!", game.players[1].name)
-        };
+            let _ = write!(msg, "{} Farkled!", game.players[1].name);
+        }
         let color = if game.ai_meld_points > 0 { Rgb888::new(0xFF, 0xAA, 0x00) } else { COLOR_FARKLE };
         let style = MonoTextStyle::new(&FONT_9X15_BOLD, color);
-        let _ = Text::with_alignment(&msg, Point::new(w / 2, layout::meld_hint_y(h)), style, Alignment::Center).draw(fb);
+        let _ = Text::with_alignment(msg.as_str(), Point::new(w / 2, layout::meld_hint_y(h)), style, Alignment::Center).draw(fb);
         draw_dice_with_ai_meld(fb, game);
     } else {
-        let status = match game.phase {
-            GamePhase::AiRolling { .. } => l.ai_roll.replace("{n}", game.players[1].name),
-            _ => l.ai_think.replace("{n}", game.players[1].name),
+        let mut status = FmtBuf::<64>::new();
+        let template = match game.phase {
+            GamePhase::AiRolling { .. } => l.ai_roll,
+            _ => l.ai_think,
         };
-        if !status.is_empty() {
-            draw_text_center(fb, game, &status, w / 2, layout::meld_hint_y(h), COLOR_TURN_SCORE, &FONT_9X15);
+        fmt_replace(&mut status, template, "", "", "", game.players[1].name);
+        if status.len > 0 {
+            draw_text_center(fb, game, status.as_str(), w / 2, layout::meld_hint_y(h), COLOR_TURN_SCORE, &FONT_9X15);
         }
         dice::draw_all_dice(fb, game);
     }
 
     if game.turn_score > 0 {
         let style = MonoTextStyle::new(&FONT_9X15, COLOR_TURN_SCORE);
-        let turn_text = l.ai_turn_score
-            .replace("{n}", game.players[1].name)
-            .replace("{s}", &format!("{}", game.turn_score));
-        let _ = Text::with_alignment(&turn_text, Point::new(w / 2, layout::turn_info_y(h)), style, Alignment::Center).draw(fb);
+        let mut sbuf = FmtBuf::<16>::new();
+        let _ = write!(sbuf, "{}", game.turn_score);
+        let mut turn_text = FmtBuf::<64>::new();
+        fmt_replace(&mut turn_text, l.ai_turn_score, sbuf.as_str(), "", "", game.players[1].name);
+        let _ = Text::with_alignment(turn_text.as_str(), Point::new(w / 2, layout::turn_info_y(h)), style, Alignment::Center).draw(fb);
     }
 
     let held_count = game.held_dice.iter().filter(|&&h| h).count();
     if held_count > 0 {
         let style = MonoTextStyle::new(&FONT_9X15, Rgb888::new(0xAA, 0xAA, 0xAA));
-        let text = format!("Held: {} dice", held_count);
-        let _ = Text::with_alignment(&text, Point::new(w / 2, layout::turn_info_y(h) + 20), style, Alignment::Center).draw(fb);
+        let mut text = FmtBuf::<64>::new();
+        let _ = write!(text, "Held: {} dice", held_count);
+        let _ = Text::with_alignment(text.as_str(), Point::new(w / 2, layout::turn_info_y(h) + 20), style, Alignment::Center).draw(fb);
     }
 }
 
@@ -202,13 +212,15 @@ fn render_game_over(fb: &mut Framebuffer, game: &Game, l: &lang::Lang) {
     if is_tie {
         let _ = Text::with_alignment("It's a Tie!", Point::new(center_x, 90), win_style, Alignment::Center).draw(fb);
     } else if let Some(winner) = winner {
-        let win_msg = format!("{} Wins!", winner.name);
-        let _ = Text::with_alignment(&win_msg, Point::new(center_x, 90), win_style, Alignment::Center).draw(fb);
+        let mut msg = FmtBuf::<64>::new();
+        let _ = write!(msg, "{} Wins!", winner.name);
+        let _ = Text::with_alignment(msg.as_str(), Point::new(center_x, 90), win_style, Alignment::Center).draw(fb);
     }
     let score_style = MonoTextStyle::new(&FONT_9X15, COLOR_TEXT);
     for (i, player) in game.players.iter().enumerate() {
-        let score_text = format!("{}: {} points", player.name, player.total_score);
-        let _ = Text::with_alignment(&score_text, Point::new(center_x, 130 + i as i32 * 24), score_style, Alignment::Center).draw(fb);
+        let mut text = FmtBuf::<64>::new();
+        let _ = write!(text, "{}: {} points", player.name, player.total_score);
+        let _ = Text::with_alignment(text.as_str(), Point::new(center_x, 130 + i as i32 * 24), score_style, Alignment::Center).draw(fb);
     }
     draw_text_center(fb, game, l.press_restart, center_x, h / 2, COLOR_TURN_SCORE, &FONT_9X15);
 }
@@ -224,10 +236,18 @@ fn render_scoreboard(fb: &mut Framebuffer, game: &Game) {
     let p0 = &game.players[0];
     let p1 = &game.players[1];
     let _ = Text::with_alignment(p0.name, Point::new(center_x - 120, y), player_style, Alignment::Center).draw(fb);
-    let _ = Text::with_alignment(&format!("{}", p0.total_score), Point::new(center_x - 120, y + 20), score_style, Alignment::Center).draw(fb);
+
+    let mut buf = FmtBuf::<32>::new();
+    let _ = write!(buf, "{}", p0.total_score);
+    let _ = Text::with_alignment(buf.as_str(), Point::new(center_x - 120, y + 20), score_style, Alignment::Center).draw(fb);
+
     let _ = Text::with_alignment("vs", Point::new(center_x, y + 10), small_style, Alignment::Center).draw(fb);
     let _ = Text::with_alignment(p1.name, Point::new(center_x + 120, y), player_style, Alignment::Center).draw(fb);
-    let _ = Text::with_alignment(&format!("{}", p1.total_score), Point::new(center_x + 120, y + 20), score_style, Alignment::Center).draw(fb);
+
+    let mut buf = FmtBuf::<32>::new();
+    let _ = write!(buf, "{}", p1.total_score);
+    let _ = Text::with_alignment(buf.as_str(), Point::new(center_x + 120, y + 20), score_style, Alignment::Center).draw(fb);
+
     let active_x = if game.current_player == 0 { center_x - 90 } else { center_x + 30 };
     let _ = Rectangle::new(Point::new(active_x, y + 36), Size::new(60, 2)).draw_styled(&PrimitiveStyle::with_fill(COLOR_TURN_SCORE), fb);
 }
@@ -239,11 +259,23 @@ fn render_turn_info(fb: &mut Framebuffer, game: &Game, l: &lang::Lang) {
     let y = layout::turn_info_y(h);
     let unheld = (0..6).filter(|&i| !game.held_dice[i]).count();
     let held_count = game.held_dice.iter().filter(|&&h| h).count();
-    let line1 = l.turn_fmt.replace("{s}", &format!("{}", game.turn_score)).replace("{r}", &format!("{}", unheld));
-    draw_text_center(fb, game, &line1, center_x, y, COLOR_TEXT, &FONT_9X15);
+
+    // Stack-format: score + remaining into tiny fixed buffers
+    let mut sbuf = FmtBuf::<16>::new();
+    let _ = write!(sbuf, "{}", game.turn_score);
+    let mut rbuf = FmtBuf::<16>::new();
+    let _ = write!(rbuf, "{}", unheld);
+
+    let mut line1 = FmtBuf::<64>::new();
+    fmt_replace(&mut line1, l.turn_fmt, sbuf.as_str(), rbuf.as_str(), "", "");
+    draw_text_center(fb, game, line1.as_str(), center_x, y, COLOR_TEXT, &FONT_9X15);
+
     if held_count > 0 {
-        let line2 = l.held_fmt.replace("{h}", &format!("{}", held_count));
-        draw_text_center(fb, game, &line2, center_x, y + 20, Rgb888::new(0xAA, 0xAA, 0xAA), &FONT_9X15);
+        let mut hbuf = FmtBuf::<16>::new();
+        let _ = write!(hbuf, "{}", held_count);
+        let mut line2 = FmtBuf::<64>::new();
+        fmt_replace(&mut line2, l.held_fmt, "", "", hbuf.as_str(), "");
+        draw_text_center(fb, game, line2.as_str(), center_x, y + 20, Rgb888::new(0xAA, 0xAA, 0xAA), &FONT_9X15);
     }
 }
 

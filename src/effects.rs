@@ -40,15 +40,17 @@ pub struct Effects {
     pub shake_y: i32,
     pub shake_frames: u32,
     screen_w: i32,
+    screen_h: i32,
 }
 
 impl Effects {
-    pub fn new(w: i32, _h: i32) -> Self {
+    pub fn new(w: i32, h: i32) -> Self {
         Self {
             particles: [PARTICLE_EMPTY; 64],
             particle_count: 0,
             shake_x: 0, shake_y: 0, shake_frames: 0,
             screen_w: w,
+            screen_h: h,
         }
     }
 
@@ -100,6 +102,9 @@ impl Effects {
             self.particle_count += 1;
         }
     }
+
+    pub fn center_x(&self) -> i32 { self.screen_w / 2 }
+    pub fn center_y(&self) -> i32 { self.screen_h / 2 }
 
     pub fn tick(&mut self) {
         let mut j = 0;

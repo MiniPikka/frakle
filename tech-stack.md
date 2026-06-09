@@ -1,25 +1,25 @@
-# Farkle UEFI Game - Technology Stack
+# Farkle - Technology Stack
 
 ## Overview
 
-A Farkle dice game running natively as a UEFI application, written in Rust, with a pixel-based graphical interface rendered via the UEFI Graphics Output Protocol (GOP).
+A Farkle dice game running natively as a UEFI application, written in Rust, with a pixel-based graphical interface rendered directly to the GOP framebuffer.
 
 ## Build Toolchain
 
 | Component | Choice | Version |
 |-----------|--------|---------|
-| Language | Rust (stable) | 1.95.0 |
-| Build System | Cargo + [cargo-make](https://github.com/sagiegurari/cargo-make) | latest |
+| Language | Rust (nightly) | latest |
 | Target Triple | `x86_64-unknown-uefi` | - |
-| Linker | `lld-link` (LLVM) | bundled with Rust |
+| Linker | `rust-lld` (LLVM) | bundled |
 
 ## Core Crates
 
-| Crate | Purpose | Justification |
-|-------|---------|---------------|
-| [`uefi`](https://crates.io/crates/uefi) | v0.37.0 | UEFI API bindings (GOP, Input, Boot Services, allocator, logger, entry macro) |
-| [`embedded-graphics`](https://crates.io/crates/embedded-graphics) | v0.8.2 | 2D drawing primitives (text, shapes, framebuffer); `no_std` compatible |
-| SimpleRng (xorshift64*) | built-in | PRNG for dice rolling; no external dependency needed |
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| [`uefi`](https://crates.io/crates/uefi) | 0.28 | UEFI API bindings (GOP, Input, Boot Services, allocator) |
+| `uefi-services` | 0.25 | UEFI global allocator, panic handler, entry macro |
+| [`embedded-graphics`](https://crates.io/crates/embedded-graphics) | 0.8 | 2D drawing primitives (text, shapes, framebuffer); `no_std` compatible |
+| `spin` | 0.9 | `Mutex` for logger state |
 
 ## Graphics Stack
 
@@ -27,124 +27,87 @@ A Farkle dice game running natively as a UEFI application, written in Rust, with
 ┌──────────────────────────────────────┐
 │           Game UI Layer              │  ← Dice faces, scoreboard, buttons, animations
 ├──────────────────────────────────────┤
-│        embedded-graphics             │  ← Primitives (Rectangle, Text, Circle, Line)
+│        embedded-graphics             │  ← Primitives (Rectangle, Text, Circle)
 ├──────────────────────────────────────┤
-│     Custom Framebuffer Adapter       │  ← Adapts UEFI GOP to embedded-graphics DrawTarget
+│     Framebuffer (double buffer)      │  ← Vec<u32> BGRx buffer, impl DrawTarget
 ├──────────────────────────────────────┤
-│   uefi::proto::console::gop          │  ← Blt() to screen via UEFI GOP protocol
+│   Direct GOP framebuffer write       │  ← copy_nonoverlapping per row (no blt())
 ├──────────────────────────────────────┤
-│         UEFI Firmware GOP            │  ← Hardware framebuffer (EmulatorPkg / real UEFI)
+│         UEFI Firmware GOP            │  ← Hardware framebuffer
 └──────────────────────────────────────┘
 ```
 
 ### Rendering Pipeline
 
-1. **Draw to back buffer** — All rendering goes into a `Vec<u32>` in BGRx format (matches GOP `Blt` pixel layout)
-2. **Flush via `Blt`** — Call `GOP::blt()` with `EfiBltBufferToVideo` to copy back buffer to screen
-3. **Double buffering** — Eliminates tearing; essential since GOP framebuffer may be uncached
+1. **Draw to back buffer** — All rendering goes into `Vec<u32>` in BGRx format (matches GOP layout)
+2. **Flush directly to GOP** — `copy_nonoverlapping` each row from back buffer to GOP framebuffer. No `gop.blt()` call — avoids potential firmware bugs
+3. **Double buffering** — Eliminates tearing
 
-### Key Rendering Details
+### Key Details
 
-- **Color format**: BGR (Blue-Green-Red-Alpha-Reserved), as used by `EFI_GRAPHICS_OUTPUT_BLT_PIXEL`
-- **Resolution**: Auto-detect from `GOP::current_mode_info()` → `HorizontalResolution` / `VerticalResolution`
-- **Fallback**: 640×480 minimum expected; layout must be responsive or fixed at minimum resolution
-- **Font**: `embedded-graphics` monospace fonts (`MonoFont`) for score text; pixel-art for decorative elements
+- **Color format**: BGRx (Blue in lowest byte), matching standard UEFI GOP format
+- **Resolution**: Auto-detect from `GOP::current_mode_info()`
+- **Font**: embedded-graphics `MonoFont` for score text; custom 12×12 Chinese pixel font; built-in 5×7 ASCII font for debug overlay
 
 ## Input
 
-| Protocol | Crate Path | Usage |
-|----------|-----------|-------|
-| Simple Text Input | `uefi::proto::console::text::input` | Poll keyboard for arrow keys, Enter, Space |
-| WaitForEvent | `uefi::table::boot::BootServices::wait_for_event` | Non-blocking input loop with timed wait |
-
-### Key Mapping
-
-| Key | Action |
-|-----|--------|
-| Arrow Left/Right | Navigate between dice / menu items |
-| Space | Select / deselect a die (hold for scoring) |
-| Enter | Confirm roll / end turn |
-| Esc | Bank points and end turn |
+| Protocol | Usage |
+|----------|-------|
+| Simple Text Input | Poll keyboard (arrow keys, Space, R, B, L, Q) |
 
 ## Memory & Allocator
 
-- **Global allocator**: `uefi-services` provides a UEFI-backed global allocator (`AllocatePool` / `FreePool`)
-- **Heap**: Standard Rust `Vec`, `String`, `Box` available
-- **Stack**: Minimal; game state fits in a few KB
-- **No external dependencies**: No filesystem access needed; all assets compiled into binary via `include_bytes!`
+- **Global allocator**: `uefi-services` provides UEFI-backed allocator (`AllocatePool`/`FreePool`)
+- **Hot path**: Zero heap allocations — all formatting uses `FmtBuf<N>` stack buffers
+- **Framebuffer**: Single `Vec<u32>` double buffer, BGRx format
 
 ## Project Structure
 
 ```
 frakle/
-├── Cargo.toml                # Package manifest
-├── .cargo/
-│   └── config.toml            # Target and linker configuration
 ├── src/
-│   ├── main.rs                # UEFI entry point, init GOP & input
-│   ├── framebuffer.rs         # Framebuffer adapter (impl DrawTarget for GOP buffer)
-│   ├── game.rs                # Game state machine (Farkle rules engine)
-│   ├── ui/
-│   │   ├── mod.rs             # UI module
-│   │   ├── dice.rs            # Dice face rendering (1-6 pips)
-│   │   ├── scoreboard.rs      # Score display, turn indicator
-│   │   ├── menu.rs            # Main menu / game over screen
-│   │   └── layout.rs          # Responsive layout calculations
-│   └── input.rs               # Keyboard input handler
-├── assets/
-│   └── (optional .bmp files embedded at compile time)
-├── build.rs                   # Build script (if needed for env vars)
-├── Makefile.toml              # cargo-make tasks (build, run-emulator)
-├── tech-stack.md
-├── game-design-doc.md
-└── rules.md
+│   ├── main.rs            # UEFI entry, game loop, debug overlay, phase watchdog
+│   ├── lib.rs             # FmtBuf stack formatter, fmt_replace template helper
+│   ├── game.rs            # Farkle rules engine, AI (optimal non-overlapping melds)
+│   ├── framebuffer.rs     # Double buffer, DrawTarget impl, direct GOP write
+│   ├── input.rs           # Keyboard polling
+│   ├── effects.rs         # Particle system, screen shake, victory effects
+│   ├── sound.rs           # Sound stubs (no audio hardware)
+│   ├── logger.rs          # File-based debug log (ESP:\frakle_debug.log)
+│   └── ui/
+│       ├── mod.rs         # UI state machine (zero-alloc rendering)
+│       ├── dice.rs        # Dice face drawing
+│       ├── layout.rs      # Responsive layout
+│       ├── lang.rs        # Bilingual EN/CN strings
+│       └── cn_font.rs     # 12×12 Chinese pixel font
+├── scripts/
+│   ├── build.sh           # Build release + stage to esp/
+│   ├── run-qemu.sh        # QEMU launcher
+│   ├── run-qemu-gdb.sh    # QEMU with GDB stub
+│   ├── deploy-usb.sh      # USB deployment
+│   └── quick-deploy.sh    # Quick deploy to /dev/sda
+└── game_test/             # Standalone 15-test harness (host target)
 ```
 
 ## Build & Run
 
-### Prerequisites
-
 ```bash
-rustup target add x86_64-unknown-uefi
-rustup component add llvm-tools-preview
-cargo install cargo-make
+# Build
+cargo build --release --target x86_64-unknown-uefi
+
+# QEMU
+bash scripts/run-qemu.sh
+
+# USB deploy
+sudo scripts/quick-deploy.sh
 ```
-
-### Cargo Config (`.cargo/config.toml`)
-
-```toml
-[build]
-target = "x86_64-unknown-uefi"
-
-[target.x86_64-unknown-uefi]
-linker = "rust-lld"
-```
-
-### Build Commands
-
-```bash
-# Build UEFI binary
-cargo build --release
-
-# Output: target/x86_64-unknown-uefi/release/frakle.efi
-
-# Verify binary type
-file target/x86_64-unknown-uefi/release/frakle.efi
-# PE32+ executable for EFI (application), x86-64
-```
-
-### Running in EmulatorPkg
-
-Copy `frakle.efi` to the EmulatorPkg build output directory and either:
-- Run from UEFI Shell: `Shell> frakle.efi`
-- Create `startup.nsh` for auto-launch
 
 ## Why This Stack?
 
 | Design Choice | Rationale |
 |---------------|-----------|
-| **Rust + UEFI** | Memory safety in a bare-metal context; no OS dependency; the `uefi` crate is mature and well-maintained |
-| **embedded-graphics** | Battle-tested `no_std` 2D library; avoids writing a full software renderer from scratch; supports text rendering |
-| **No dynamic allocation for rendering** | GOP back buffer is a single pre-allocated `Vec<u32>`; no per-frame allocations |
-| **No asset files** | `include_bytes!` embeds everything; single `.efi` file deployment |
-| **cargo-make** | Simplifies complex build steps (compile + copy to emulator + launch emulator) into one command |
+| **Direct FB write vs blt()** | Avoids firmware GOP blt() bugs (suspected crash source on some hardware) |
+| **BGRx internal format** | Matches GOP layout — memcpy per row, zero conversion |
+| **FmtBuf stack formatting** | Zero heap allocs in rendering — prevents UEFI allocator fragmentation |
+| **RDTSC seed** | Per-boot random dice rolls, no UEFI protocol dependency |
+| **No asset files** | Everything compiled into `.efi`; single file deployment |

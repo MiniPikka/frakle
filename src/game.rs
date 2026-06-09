@@ -3,13 +3,13 @@
 fn collect_dice<F: Fn(usize) -> bool>(dice: &[u8; 6], pred: F) -> ([u8; 6], usize) {
     let mut out = [0u8; 6];
     let mut n = 0;
-    for i in 0..6 {
-        if pred(i) { out[n] = dice[i]; n += 1; }
+    for (i, &die) in dice.iter().enumerate() {
+        if pred(i) { out[n] = die; n += 1; }
     }
     (out, n)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GamePhase {
     Title,
     PlayerTurn(TurnPhase),
@@ -21,7 +21,7 @@ pub enum GamePhase {
     Quit,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TurnPhase {
     ReadyToRoll,
     Rolling { frames: u32, frame_count: u32 },
@@ -174,9 +174,11 @@ impl Game {
                     } else { Some(self.current_player) }
                 }
             }
-        } else if self.final_turn.is_some() {
-            Some(if other_score > this_score { other_player } else { self.final_turn.unwrap() })
-        } else { None }
+        } else {
+            self.final_turn.map(|trigger| {
+                if other_score > this_score { other_player } else { trigger }
+            })
+        }
     }
 }
 
@@ -185,19 +187,52 @@ impl Default for Game {
 }
 
 pub fn ai_decide(game: &Game) -> AiAction {
-    let (unheld, n) = collect_dice(&game.dice, |i| !game.held_dice[i]);
-    let unheld_slice = &unheld[..n];
-    let melds = find_all_melds(unheld_slice);
-    if melds.is_empty() { return AiAction::Farkle; }
-    let best = melds.iter().max_by_key(|m| m.score).unwrap();
-    let score_after = game.turn_score + best.score;
-    let remaining = n - best.indices_len;
+    // Collect unheld dice values AND their original positions in game.dice
+    let mut unheld_vals = [0u8; 6];
+    let mut orig_pos = [0usize; 6];
+    let mut n = 0;
+    for i in 0..6 {
+        if !game.held_dice[i] {
+            unheld_vals[n] = game.dice[i];
+            orig_pos[n] = i;
+            n += 1;
+        }
+    }
+    if n == 0 { return AiAction::Farkle; }
+
+    let all_melds = find_all_melds(&unheld_vals[..n]);
+    if all_melds.is_empty() { return AiAction::Farkle; }
+
+    // Find the best non-overlapping combination of melds
+    let (best_set, best_len, total_score) = find_best_meld_combo(&all_melds);
+
+    // Remap indices from collected-array positions to original game.dice positions
+    let mut combined_indices = [0usize; 6];
+    let mut combined_len = 0;
+    for &meld_idx in &best_set[..best_len] {
+        let meld = &all_melds.items[meld_idx];
+        for &local_idx in &meld.indices[..meld.indices_len] {
+            combined_indices[combined_len] = orig_pos[local_idx];
+            combined_len += 1;
+        }
+    }
+
+    let score_after = game.turn_score + total_score;
+    let remaining = n - combined_len;
     let should_bank = game.turn_score > 0
         && (score_after >= 500 || remaining <= 1
             || game.players[game.current_player].total_score + score_after >= 5000
             || (remaining == 0 && game.turn_score > 300));
-    if should_bank { AiAction::BankAfterMeld(best.clone()) }
-    else { AiAction::Roll(best.clone()) }
+
+    let meld_info = MeldInfo {
+        indices: combined_indices,
+        indices_len: combined_len,
+        score: total_score,
+        description: "Meld",
+    };
+
+    if should_bank { AiAction::BankAfterMeld(meld_info) }
+    else { AiAction::Roll(meld_info) }
 }
 
 pub enum AiAction {
@@ -224,8 +259,8 @@ pub fn find_all_melds(dice: &[u8]) -> MeldList {
 
     let mut triplet_vals = [0usize; 2];
     let mut triplet_count = 0;
-    for v in 1..=6 {
-        if triplet_count < 2 && counts[v] >= 3 {
+    for (v, &count) in counts.iter().enumerate().skip(1) {
+        if triplet_count < 2 && count >= 3 {
             triplet_vals[triplet_count] = v;
             triplet_count += 1;
         }
@@ -295,7 +330,58 @@ pub fn find_all_melds(dice: &[u8]) -> MeldList {
     melds
 }
 
+/// State for the recursive meld-search.
+struct MeldSearch {
+    best_set: [usize; 16],
+    best_len: usize,
+    best_score: u32,
+    cur_set: [usize; 16],
+}
+
+/// Find the best (highest-scoring) non-overlapping combination of melds.
+/// Returns (meld_indices, count, total_score).
+fn find_best_meld_combo(melds: &MeldList) -> ([usize; 16], usize, u32) {
+    let mut state = MeldSearch {
+        best_set: [0; 16],
+        best_len: 0,
+        best_score: 0,
+        cur_set: [0; 16],
+    };
+    search_melds(&melds.items[..melds.len], 0, 0u8, 0, 0, &mut state);
+    (state.best_set, state.best_len, state.best_score)
+}
+
+/// Recursive branch-and-bound search for the best non-overlapping meld set.
+fn search_melds(
+    melds: &[MeldInfo],
+    start: usize,
+    used: u8,
+    cur_len: usize,
+    cur_score: u32,
+    state: &mut MeldSearch,
+) {
+    if cur_score > state.best_score {
+        state.best_score = cur_score;
+        state.best_set[..cur_len].copy_from_slice(&state.cur_set[..cur_len]);
+        state.best_len = cur_len;
+    }
+    for i in start..melds.len() {
+        let meld = &melds[i];
+        let mut mask = 0u8;
+        for &idx in &meld.indices[..meld.indices_len] {
+            mask |= 1 << idx;
+        }
+        if used & mask == 0 {
+            state.cur_set[cur_len] = i;
+            search_melds(melds, i + 1, used | mask, cur_len + 1, cur_score + meld.score, state);
+        }
+    }
+}
+
 pub fn find_meld_score(dice: &[u8]) -> Option<u32> {
     let melds = find_all_melds(dice);
-    if melds.is_empty() { None } else { Some(melds.iter().map(|m| m.score).sum()) }
+    if melds.is_empty() { None } else {
+        let (_, _, score) = find_best_meld_combo(&melds);
+        Some(score)
+    }
 }

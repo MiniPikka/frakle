@@ -1,0 +1,17 @@
+=== Farkle Debug Log ===
+[0001] === Farkle Debug Log Started ===
+[0002] Game objects initialized
+[0003] Memory: Game struct 192 bytes
+0004] Graphics: 1280x800
+[0005] Framebuffer initialized
+[0006] Input initialized
+[0007] Game objects initialized
+[0008] Memory: Game=192B, FB=1920000B, Total≈1879KB
+[0009] Phase transition: Title
+[0010] State: Title | P0 | Score: 0 | Turn: 0 | Dice: [0, 0, 0, 0, 0, 0] | Held: [false, false, false, false, false, false]
+[0011] Memory: Game=192B, FB=1920000B, Total≈1879KB
+[0012] Frame: 300 | Phase: Title
+[0013] Memory: Game=192B, FB=1920000B, Total≈1879KB
+[0014] Frame: 600 | Phase: Title
+[0015] Memory: Game=192B, FB=1920000B, Total≈1879KB
+[0016] Fr

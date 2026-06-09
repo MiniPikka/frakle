@@ -1,16 +1,13 @@
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
 
-#[cfg(not(test))]
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop { core::hint::spin_loop(); }
-}
+extern crate alloc;
 
-use core::time::Duration;
+use core::fmt::Write;
 use uefi::prelude::*;
 use uefi::proto::console::gop::GraphicsOutput;
 use uefi::proto::console::text::Input;
+use embedded_graphics::pixelcolor::Rgb888;
 
 use frakle::framebuffer::Framebuffer;
 use frakle::game::{Game, GamePhase, TurnPhase, ai_decide, AiAction};
@@ -19,8 +16,12 @@ use frakle::ui::render;
 use frakle::effects::Effects;
 use frakle::sound::SoundQueue;
 use frakle::sound;
+use frakle::logger;
+use frakle::debug_log;
+use frakle::FmtBuf;
 
 const FRAME_DELAY_US: u64 = 16_000;
+const PHASE_TIMEOUT_FRAMES: u32 = 600; // ~10 seconds at 60fps
 
 struct SimpleRng { state: u64 }
 
@@ -35,24 +36,68 @@ impl SimpleRng {
     fn next_die(&mut self) -> u8 { (self.next() % 6 + 1) as u8 }
 }
 
-#[entry]
-fn main() -> Status {
-    uefi::helpers::init().unwrap();
+/// Short name for game phase (for debug overlay).
+fn phase_short(phase: &GamePhase) -> &'static str {
+    match phase {
+        GamePhase::Title => "Title",
+        GamePhase::PlayerTurn(tp) => match tp {
+            TurnPhase::ReadyToRoll => "P:Roll?",
+            TurnPhase::Rolling { .. } => "P:Roll!",
+            TurnPhase::Selecting => "P:Select",
+            TurnPhase::Farkle { .. } => "P:Farkle",
+            TurnPhase::Banking { .. } => "P:Bank",
+        },
+        GamePhase::AiTurn => "AI:Think",
+        GamePhase::AiShowMeld { .. } => "AI:Show",
+        GamePhase::AiRolling { .. } => "AI:Roll!",
+        GamePhase::AiSelecting { .. } => "AI:Wait",
+        GamePhase::GameOver => "GameOver",
+        GamePhase::Quit => "QUIT",
+    }
+}
 
-    let gop_handle = uefi::boot::get_handle_for_protocol::<GraphicsOutput>().unwrap();
-    let mut gop = uefi::boot::open_protocol_exclusive::<GraphicsOutput>(gop_handle).unwrap();
+#[entry]
+fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
+    uefi::helpers::init(&mut system_table).unwrap();
+
+    let bs = system_table.boot_services();
+
+    // Initialize logging (continue even if it fails)
+    let _ = logger::init(image, bs);
+
+    let gop_handle = bs.get_handle_for_protocol::<GraphicsOutput>().unwrap();
+    let mut gop = bs.open_protocol_exclusive::<GraphicsOutput>(gop_handle).unwrap();
     let (width, height) = gop.current_mode_info().resolution();
     let mut fb = Framebuffer::new(width, height);
 
-    let input_handle = uefi::boot::get_handle_for_protocol::<Input>().unwrap();
-    let mut input = uefi::boot::open_protocol_exclusive::<Input>(input_handle).unwrap();
+    let input_handle = bs.get_handle_for_protocol::<Input>().unwrap();
+    let mut input = bs.open_protocol_exclusive::<Input>(input_handle).unwrap();
 
+    // Use CPU timestamp counter as seed — different every boot
+    let seed = unsafe { core::arch::x86_64::_rdtsc() };
     let mut game = Game::new();
-    let mut rng = SimpleRng::new(0xDEADBEEF_CAFEBABE);
+    let mut rng = SimpleRng::new(seed);
     let mut effects = Effects::new(width as i32, height as i32);
     let mut snd = SoundQueue::new();
 
+    logger::log(image, bs, "Game objects initialized");
+    logger::log_memory_usage(image, bs, core::mem::size_of::<Game>());
+
+    let mut frame_count: u32 = 0;
+    let mut phase_frames: u32 = 0;
+    let mut prev_phase: GamePhase = game.phase;
+    let mut max_consecutive: u32 = 0;
+
     loop {
+        frame_count += 1;
+        phase_frames += 1;
+
+        // Phase timeout watchdog — flash red warning
+        let stuck = phase_frames > PHASE_TIMEOUT_FRAMES;
+        if phase_frames > max_consecutive {
+            max_consecutive = phase_frames;
+        }
+
         let key = poll_input(&mut input);
 
         let has_animation = match game.phase {
@@ -62,10 +107,16 @@ fn main() -> Status {
             _ => false,
         };
         if matches!(key, GameInput::None) && !has_animation && game.flash_frames == 0 {
-            uefi::boot::stall(Duration::from_micros(FRAME_DELAY_US * 4));
+            bs.stall((FRAME_DELAY_US * 4) as usize);
         }
 
         process(&mut game, key, &mut rng, &mut effects, &mut snd);
+
+        // Track phase changes for watchdog
+        if game.phase != prev_phase {
+            prev_phase = game.phase;
+            phase_frames = 0;
+        }
 
         if game.flash_frames > 0 {
             game.flash_frames -= 1;
@@ -76,8 +127,30 @@ fn main() -> Status {
         snd.tick();
         render(&mut fb, &game);
         effects.render(&mut fb);
+
+        // ── Debug overlay (top-left) ──
+        // Frame + phase + scores + watchdog status — all stack-allocated
+        let mut overlay = FmtBuf::<128>::new();
+        let _ = write!(overlay, "F:{} {}", frame_count, phase_short(&game.phase));
+        fb.draw_text_small(10, 10, overlay.as_str(), Rgb888::new(0, 255, 0));
+
+        let mut score_buf = FmtBuf::<64>::new();
+        let _ = write!(score_buf, "P0:{} P1:{} T:{}",
+            game.players[0].total_score,
+            game.players[1].total_score,
+            game.turn_score
+        );
+        fb.draw_text_small(10, 20, score_buf.as_str(), Rgb888::new(255, 255, 0));
+
+        // Watchdog status line
+        if stuck {
+            let mut wd = FmtBuf::<64>::new();
+            let _ = write!(wd, "STUCK! {}f max:{}", phase_frames, max_consecutive);
+            fb.draw_text_small(10, 32, wd.as_str(), Rgb888::new(255, 0, 0));
+        }
+
         fb.present(&mut gop);
-        uefi::boot::stall(Duration::from_micros(FRAME_DELAY_US));
+        bs.stall(FRAME_DELAY_US as usize);
     }
 }
 
@@ -96,7 +169,9 @@ fn process(
         GamePhase::AiRolling { frames }    => handle_ai_rolling(game, frames, rng),
         GamePhase::AiSelecting { frames }  => handle_ai_selecting(game, frames, fx, snd),
         GamePhase::GameOver                => handle_game_over(game, key),
-        GamePhase::Quit                    => {}
+        GamePhase::Quit                    => {
+            debug_log!("Quit requested");
+        }
     }
 }
 
@@ -169,7 +244,7 @@ fn handle_rolling(
     if frames >= frame_count {
         if game.is_farkle() {
             game.turn_score = 0;
-            fx.spawn_farkle(320, 200);
+            fx.spawn_farkle(fx.center_x(), fx.center_y());
             snd.play(sound::SND_FARKLE);
             game.phase = GamePhase::PlayerTurn(TurnPhase::Farkle { frames: 0 });
         } else {
@@ -199,7 +274,7 @@ fn handle_selecting(
                 game.apply_selection();
                 let scored = game.turn_score;
                 game.bank_score();
-                fx.spawn_score_pop(320, 200, scored);
+                fx.spawn_score_pop(fx.center_x(), fx.center_y(), scored);
                 snd.play(sound::SND_BANK);
                 game.phase = GamePhase::PlayerTurn(TurnPhase::Banking { frames: 0 });
             } else if game.turn_score > 0 {
@@ -214,7 +289,7 @@ fn handle_selecting(
             if game.check_selection_is_valid_meld().is_some() {
                 game.apply_selection();
                 if game.held_dice.iter().all(|&h| h) { game.held_dice = [false; 6]; }
-                fx.spawn_score_pop(320, 200, game.turn_score);
+                fx.spawn_score_pop(fx.center_x(), fx.center_y(), game.turn_score);
                 game.roll_dice(&mut || rng.next_die());
                 snd.play(sound::SND_ROLL);
                 game.phase = GamePhase::PlayerTurn(TurnPhase::Rolling { frames: 0, frame_count: 30 });

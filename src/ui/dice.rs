@@ -103,8 +103,7 @@ pub fn draw_roll_animation(fb: &mut Framebuffer, game: &Game, frame: u32, _total
             // Show held dice in dimmed state so player can see what's set aside
             draw_die(fb, x, dice_y, game.dice[i], true, false, false);
         } else {
-            let val = ((seed >> (i * 5)) & 0x7) as u8 + 1;
-            let v = if val > 6 { ((val - 1) % 6) + 1 } else { val };
+            let v = (((seed >> (i * 5)) & 0xFF) % 6) as u8 + 1;
             draw_die(fb, x, dice_y, v, false, false, false);
         }
     }

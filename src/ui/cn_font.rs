@@ -82,15 +82,13 @@ fn draw_cn_char(
         for (row, &bits) in cn.glyph.iter().enumerate() {
             for col in 0..12 {
                 if (bits >> col) & 1 != 0 {
-                    let px = top_left.x + col;
-                    let py = top_left.y + row as i32;
-                    let _ = Rectangle::new(Point::new(px, py), Size::new(1, 1))
-                        .draw_styled(&PrimitiveStyle::with_fill(color), fb);
+                    fb.set_pixel(top_left.x + col, top_left.y + row as i32, color);
                 }
             }
         }
         Point::new(top_left.x + 13, top_left.y)
     } else {
+        // Draw placeholder for missing characters
         let _ = Rectangle::new(top_left, Size::new(12, 12))
             .draw_styled(&PrimitiveStyle::with_stroke(Rgb888::new(0xCC, 0x00, 0x00), 1), fb);
         Point::new(top_left.x + 13, top_left.y)
