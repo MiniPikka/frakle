@@ -26,6 +26,9 @@ bash scripts/run-qemu-gdb.sh
 gdb -ex "target remote :1234" target/x86_64-unknown-uefi/debug/frakle.efi
 ```
 
+QEMU 脚本使用 pflash + mtools 创建的 FAT16 镜像（非 `fat:rw:`），避免 QEMU vvfat 驱动崩溃。
+`cache=unsafe` 使日志写入更快刷新到宿主文件。
+
 ### 3. QEMU CPU 异常日志
 
 ```bash
@@ -38,9 +41,21 @@ qemu-system-x86_64 ... -d int,cpu_reset -D crash.log
 - `v=06` — Undefined Opcode (#UD)
 - `v=20` — APIC Timer (正常)
 
-### 4. 真机文件日志
+### 4. 文件日志
 
-Logger 在 ESP 分区写入 `\frakle_debug.log`（仅启动时，不在热路径中）。
+Logger 在 ESP 分区写入 `\frakle_debug.log`。记录内容：
+- 启动信息（Game struct 大小等）
+- 每次阶段切换（Title → P:Roll? → P:Select → AI:Think → …）
+- 每次按键事件
+- 游戏结束（胜者、最终分数）
+- 每 600 帧心跳（确认游戏循环存活）
+
+**QEMU 读取日志**（需 `cache=unsafe`，QEMU 磁盘缓存定期刷新）：
+```bash
+mcopy -i esp.img ::frakle_debug.log /dev/stdout
+```
+
+**真机读取日志**：U 盘插入 Linux 后直接查看 `\frakle_debug.log`。
 
 ### 5. 查看 GDB 崩溃现场
 
@@ -87,4 +102,4 @@ gdb -batch \
 | 热路径堆分配 | 0 |
 | 游戏逻辑测试 | 15/15 通过 |
 | QEMU 运行 | 稳定 |
-| 二进制大小 | ~78KB (release) |
+| 二进制大小 | ~80KB (release) |

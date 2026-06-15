@@ -8,11 +8,16 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ESP="$PROJECT_DIR/esp"
-OVMF="/usr/share/edk2-ovmf/x64/OVMF.4m.fd"
+IMG="$PROJECT_DIR/esp.img"
+OVMF_VARS="/tmp/frakle_OVMF_VARS.fd"
 
-# OVMF fallback
-for p in "$OVMF" /usr/share/edk2/x64/OVMF.4m.fd; do
-    [ -f "$p" ] && { OVMF="$p"; break; }
+OVMF_CODE="/usr/share/edk2/x64/OVMF_CODE.4m.fd"
+OVMF_VARS_TEMPLATE="/usr/share/edk2/x64/OVMF_VARS.4m.fd"
+for p in "$OVMF_CODE" /usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd; do
+    [ -f "$p" ] && { OVMF_CODE="$p"; break; }
+done
+for p in "$OVMF_VARS_TEMPLATE" /usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd; do
+    [ -f "$p" ] && { OVMF_VARS_TEMPLATE="$p"; break; }
 done
 
 if [ ! -f "$ESP/EFI/BOOT/BOOTX64.EFI" ]; then
@@ -20,14 +25,23 @@ if [ ! -f "$ESP/EFI/BOOT/BOOTX64.EFI" ]; then
     "$SCRIPT_DIR/build.sh"
 fi
 
+# Build FAT16 image (supports guest file writes without vvfat crash)
+echo "Creating FAT16 image..."
+dd if=/dev/zero of="$IMG" bs=1M count=16 status=none
+mkfs.fat -F 16 -n "FARKLE" "$IMG" >/dev/null 2>&1
+mcopy -s -i "$IMG" "$ESP/EFI" ::EFI
+
+cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+
 echo "=== Farkle QEMU (GDB mode) ==="
 echo "Game window opening..."
 echo "GDB port: :1234 (for Claude to connect)"
 echo ""
 
 qemu-system-x86_64 \
-    -bios "$OVMF" \
-    -drive "format=raw,file=fat:rw:$ESP" \
+    -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE" \
+    -drive "if=pflash,format=raw,file=$OVMF_VARS" \
+    -drive "format=raw,file=$IMG,cache=unsafe" \
     -no-reboot -no-shutdown \
     -machine pc -m 256M -cpu qemu64 \
     -d int,cpu_reset -D "$PROJECT_DIR/qemu_crash.log" \

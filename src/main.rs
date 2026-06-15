@@ -17,7 +17,6 @@ use frakle::effects::Effects;
 use frakle::sound::SoundQueue;
 use frakle::sound;
 use frakle::logger;
-use frakle::debug_log;
 use frakle::FmtBuf;
 
 const FRAME_DELAY_US: u64 = 16_000;
@@ -112,10 +111,32 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
         process(&mut game, key, &mut rng, &mut effects, &mut snd);
 
-        // Track phase changes for watchdog
+        // Log game over
+        if matches!(game.phase, GamePhase::GameOver) && !matches!(prev_phase, GamePhase::GameOver) {
+            let w = game.winner.unwrap_or(0);
+            let mut gb = FmtBuf::<64>::new();
+            let _ = write!(gb, "GAME OVER! Winner=P{} P0:{} P1:{}",
+                w, game.players[0].total_score, game.players[1].total_score);
+            logger::log(image, bs, gb.as_str());
+        }
+
+        // Track phase changes for watchdog + log
         if game.phase != prev_phase {
+            let mut pb = FmtBuf::<32>::new();
+            let _ = write!(pb, "{}", phase_short(&game.phase));
+            logger::log_game_state(image, bs, pb.as_str(),
+                game.current_player,
+                game.players[game.current_player].total_score,
+                game.turn_score, &game.dice, &game.held_dice);
             prev_phase = game.phase;
             phase_frames = 0;
+        }
+
+        // Periodic heartbeat
+        if frame_count.is_multiple_of(600) {
+            let mut hb = FmtBuf::<48>::new();
+            let _ = write!(hb, "Heartbeat F:{} phase={}", frame_count, phase_short(&game.phase));
+            logger::log(image, bs, hb.as_str());
         }
 
         if game.flash_frames > 0 {
@@ -169,9 +190,7 @@ fn process(
         GamePhase::AiRolling { frames }    => handle_ai_rolling(game, frames, rng),
         GamePhase::AiSelecting { frames }  => handle_ai_selecting(game, frames, fx, snd),
         GamePhase::GameOver                => handle_game_over(game, key),
-        GamePhase::Quit                    => {
-            debug_log!("Quit requested");
-        }
+        GamePhase::Quit => {}
     }
 }
 

@@ -84,10 +84,12 @@ frakle/
 │       └── cn_font.rs     # Auto-generated 12×12 Chinese pixel font
 ├── scripts/
 │   ├── build.sh           # Build release + stage to esp/
-│   ├── run-qemu.sh        # One-click QEMU launcher
+│   ├── verify.sh          # Full verification: build + clippy + tests
+│   ├── run-qemu.sh        # One-click QEMU launcher (FAT16 image, pflash)
 │   ├── run-qemu-gdb.sh    # QEMU with GDB stub (:1234) for remote debugging
 │   ├── deploy-usb.sh      # USB deployment (interactive device selection)
-│   └── quick-deploy.sh    # Deploy to /dev/sda with confirmation
+│   ├── quick-deploy.sh    # Deploy to /dev/sda with confirmation
+│   └── view-log.sh        # View debug log from USB drive
 ├── esp/                   # Staged EFI boot files
 │   └── EFI/BOOT/BOOTX64.EFI
 ├── game_test/             # Standalone game logic test harness (15 tests)
@@ -115,6 +117,12 @@ rustup target add x86_64-unknown-uefi
 cargo build --release --target x86_64-unknown-uefi
 # Or: bash scripts/build.sh
 # Output: esp/EFI/BOOT/BOOTX64.EFI
+```
+
+### Verify (build + clippy + tests)
+
+```bash
+bash scripts/verify.sh
 ```
 
 ### Run in QEMU

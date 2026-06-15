@@ -2,6 +2,9 @@
 target/
 test_fat.img
 test_image/
+esp.img
+qemu_serial.log
+qemu_crash.log
 
 # Editor
 *.swp

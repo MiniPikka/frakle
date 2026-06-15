@@ -1,5 +1,6 @@
 use uefi::proto::console::text::{Input, Key, ScanCode};
 
+#[derive(Debug)]
 pub enum GameInput {
     None,
     Left,
