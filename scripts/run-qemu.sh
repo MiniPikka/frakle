@@ -89,8 +89,6 @@ QEMU_ARGS=(
     -no-shutdown
     -machine pc,pcspk-audiodev=snd0
     -audiodev pa,id=snd0
-    -device virtio-vga
-    -vga none
     -m 256M
     -cpu qemu64
 )
