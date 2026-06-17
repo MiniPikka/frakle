@@ -15,7 +15,7 @@ use embedded_graphics::{
 
 use crate::framebuffer::{
     Framebuffer, COLOR_BG, COLOR_BUTTON_BANK, COLOR_BUTTON_ROLL, COLOR_DICE_FACE,
-    COLOR_DICE_PIP, COLOR_FARKLE, COLOR_TEXT, COLOR_TITLE, COLOR_TURN_SCORE,
+    COLOR_DICE_PIP, COLOR_FARKLE, COLOR_HELD, COLOR_SELECTED, COLOR_TEXT, COLOR_TITLE, COLOR_TURN_SCORE,
 };
 use crate::game::{Game, GamePhase, TurnPhase};
 use crate::{FmtBuf, fmt_replace};
@@ -56,7 +56,7 @@ fn render_title(fb: &mut Framebuffer, _game: &Game, l: &lang::Lang) {
     let center_x = w / 2;
 
     let _ = Rectangle::new(Point::new(0, 0), Size::new(w as u32, 36))
-        .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x0F, 0x0F, 0x22)), fb);
+        .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x10, 0x10, 0x22)), fb);
 
     let title_style = MonoTextStyle::new(&FONT_10X20, COLOR_TITLE);
     let _ = Text::with_alignment("F A R K L E", Point::new(center_x, layout::title_y(h) + 20), title_style, Alignment::Center).draw(fb);
@@ -70,9 +70,9 @@ fn render_title(fb: &mut Framebuffer, _game: &Game, l: &lang::Lang) {
     }
 
     draw_text_center(fb, _game, l.title_start, center_x, dice_y + layout::DIE_SIZE + 30, COLOR_TURN_SCORE, &FONT_9X15);
-    let lang_style = MonoTextStyle::new(&FONT_7X13, Rgb888::new(0x66, 0x66, 0xCC));
+    let lang_style = MonoTextStyle::new(&FONT_7X13, Rgb888::new(0x7B, 0x7B, 0xE0));
     let _ = Text::with_alignment(l.lang_indicator, Point::new(center_x, dice_y + layout::DIE_SIZE + 52), lang_style, Alignment::Center).draw(fb);
-    draw_text_center(fb, _game, l.title_ctrl, center_x, h - 20, Rgb888::new(0x88, 0x88, 0xAA), &FONT_7X13);
+    draw_text_center(fb, _game, l.title_ctrl, center_x, h - 20, Rgb888::new(0x98, 0x98, 0xB8), &FONT_7X13);
 }
 
 fn render_player_turn(fb: &mut Framebuffer, game: &Game, phase: TurnPhase, l: &lang::Lang) {
@@ -101,9 +101,9 @@ fn render_player_turn(fb: &mut Framebuffer, game: &Game, phase: TurnPhase, l: &l
                     let _ = write!(sbuf, "{}", score);
                     let mut msg = FmtBuf::<64>::new();
                     fmt_replace(&mut msg, l.select_meld, sbuf.as_str(), "", "", "");
-                    (Rgb888::new(0xF0, 0xC0, 0x40), msg)
+                    (COLOR_SELECTED, msg)
                 } else {
-                    (Rgb888::new(0xFF, 0x66, 0x66), FmtBuf::<64>::new())
+                    (COLOR_FARKLE, FmtBuf::<64>::new())
                 };
                 let text = if meld_score.is_some() { msg_text.as_str() } else { l.invalid_meld };
                 draw_text_center(fb, game, text, w / 2, layout::flash_msg_y(h), color, &FONT_9X15);
@@ -138,7 +138,7 @@ fn render_ai_turn_detail(fb: &mut Framebuffer, game: &Game, show_meld: bool, l: 
         } else {
             let _ = write!(msg, "{} Farkled!", game.players[1].name);
         }
-        let color = if game.ai_meld_points > 0 { Rgb888::new(0xFF, 0xAA, 0x00) } else { COLOR_FARKLE };
+        let color = if game.ai_meld_points > 0 { COLOR_BUTTON_BANK } else { COLOR_FARKLE };
         let style = MonoTextStyle::new(&FONT_9X15_BOLD, color);
         let _ = Text::with_alignment(msg.as_str(), Point::new(w / 2, layout::meld_hint_y(h)), style, Alignment::Center).draw(fb);
         draw_dice_with_ai_meld(fb, game);
@@ -166,7 +166,7 @@ fn render_ai_turn_detail(fb: &mut Framebuffer, game: &Game, show_meld: bool, l: 
 
     let held_count = game.held_dice.iter().filter(|&&h| h).count();
     if held_count > 0 {
-        let style = MonoTextStyle::new(&FONT_9X15, Rgb888::new(0xAA, 0xAA, 0xAA));
+        let style = MonoTextStyle::new(&FONT_9X15, COLOR_HELD);
         let mut text = FmtBuf::<64>::new();
         let _ = write!(text, "Held: {} dice", held_count);
         let _ = Text::with_alignment(text.as_str(), Point::new(w / 2, layout::turn_info_y(h) + 20), style, Alignment::Center).draw(fb);
@@ -184,9 +184,9 @@ fn draw_dice_with_ai_meld(fb: &mut Framebuffer, game: &Game) {
         let value = game.dice[i];
         if is_ai_meld && !is_held {
             let s = layout::DIE_SIZE;
-            let _ = Rectangle::new(Point::new(x + 2, y + 2), Size::new(s as u32, s as u32)).draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x10, 0x10, 0x20)), fb);
+            let _ = Rectangle::new(Point::new(x + 2, y + 2), Size::new(s as u32, s as u32)).draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x0C, 0x0C, 0x1A)), fb);
             let _ = Rectangle::new(Point::new(x, y), Size::new(s as u32, s as u32)).draw_styled(&PrimitiveStyle::with_fill(COLOR_DICE_FACE), fb);
-            let border = PrimitiveStyle::with_stroke(Rgb888::new(0xFF, 0xAA, 0x00), 3);
+            let border = PrimitiveStyle::with_stroke(COLOR_BUTTON_BANK, 3);
             let _ = Rectangle::new(Point::new(x, y), Size::new(s as u32, s as u32)).draw_styled(&border, fb);
             if (1..=6).contains(&value) {
                 let pip_style = PrimitiveStyle::with_fill(COLOR_DICE_PIP);
@@ -232,7 +232,7 @@ fn render_scoreboard(fb: &mut Framebuffer, game: &Game) {
     let y = layout::scoreboard_y(h);
     let player_style = MonoTextStyle::new(&FONT_9X15_BOLD, COLOR_TEXT);
     let score_style = MonoTextStyle::new(&FONT_9X15_BOLD, COLOR_TURN_SCORE);
-    let small_style = MonoTextStyle::new(&FONT_9X15, Rgb888::new(0xAA, 0xAA, 0xAA));
+    let small_style = MonoTextStyle::new(&FONT_9X15, COLOR_HELD);
     let p0 = &game.players[0];
     let p1 = &game.players[1];
     let _ = Text::with_alignment(p0.name, Point::new(center_x - 120, y), player_style, Alignment::Center).draw(fb);
@@ -275,7 +275,7 @@ fn render_turn_info(fb: &mut Framebuffer, game: &Game, l: &lang::Lang) {
         let _ = write!(hbuf, "{}", held_count);
         let mut line2 = FmtBuf::<64>::new();
         fmt_replace(&mut line2, l.held_fmt, "", "", hbuf.as_str(), "");
-        draw_text_center(fb, game, line2.as_str(), center_x, y + 20, Rgb888::new(0xAA, 0xAA, 0xAA), &FONT_9X15);
+        draw_text_center(fb, game, line2.as_str(), center_x, y + 20, COLOR_HELD, &FONT_9X15);
     }
 }
 
@@ -294,7 +294,7 @@ fn render_action_buttons(fb: &mut Framebuffer, game: &Game, l: &lang::Lang) {
 }
 
 fn render_help_bar(fb: &mut Framebuffer, w: i32, h: i32) {
-    let style = MonoTextStyle::new(&FONT_7X13, Rgb888::new(0x66, 0x66, 0x88));
+    let style = MonoTextStyle::new(&FONT_7X13, Rgb888::new(0x70, 0x70, 0x98));
     let _ = Text::with_alignment("[arrows]Move  [Space]Pick  [B]Bank  [R]Roll  [Q]Quit  [L]Lang",
         Point::new(w / 2, layout::help_y(h)), style, Alignment::Center).draw(fb);
 }

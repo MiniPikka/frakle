@@ -7,7 +7,7 @@ use embedded_graphics::{
     primitives::{PrimitiveStyle, Rectangle, StyledDrawable},
 };
 
-use crate::framebuffer::{Framebuffer, COLOR_FARKLE, COLOR_TITLE, COLOR_TURN_SCORE, COLOR_SELECTED};
+use crate::framebuffer::{Framebuffer, COLOR_FARKLE, COLOR_TITLE, COLOR_TURN_SCORE, COLOR_SELECTED, COLOR_BUTTON_ROLL};
 
 const DIR16: [(f32, f32); 16] = [
     (1.000, 0.000), (0.924, 0.383), (0.707, 0.707), (0.383, 0.924),
@@ -86,8 +86,8 @@ impl Effects {
     pub fn spawn_victory(&mut self) {
         let w = self.screen_w;
         let colors = [COLOR_TITLE, COLOR_TURN_SCORE, COLOR_SELECTED,
-                      Rgb888::new(0xFF, 0x66, 0x66), Rgb888::new(0x66, 0xFF, 0x66),
-                      Rgb888::new(0x66, 0x66, 0xFF)];
+                      COLOR_FARKLE, COLOR_BUTTON_ROLL,
+                      Rgb888::new(0x80, 0xD0, 0xFF)];
         for i in 0..48 {
             if self.particle_count >= 64 { break; }
             let x = ((i * 137 + 53) % w as usize) as f32;

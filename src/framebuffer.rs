@@ -240,14 +240,14 @@ pub fn rgb_to_u32(color: Rgb888) -> u32 {
     (color.b() as u32) | ((color.g() as u32) << 8) | ((color.r() as u32) << 16)
 }
 
-pub const COLOR_BG: Rgb888 = Rgb888::new(0x1A, 0x1A, 0x2E);
-pub const COLOR_DICE_FACE: Rgb888 = Rgb888::new(0xE6, 0xE6, 0xE6);
-pub const COLOR_DICE_PIP: Rgb888 = Rgb888::new(0x2D, 0x2D, 0x2D);
-pub const COLOR_SELECTED: Rgb888 = Rgb888::new(0xF0, 0xC0, 0x40);
-pub const COLOR_HELD: Rgb888 = Rgb888::new(0x88, 0x88, 0x88);
-pub const COLOR_TEXT: Rgb888 = Rgb888::new(0xFF, 0xFF, 0xFF);
-pub const COLOR_TURN_SCORE: Rgb888 = Rgb888::new(0x4E, 0xCC, 0xA3);
-pub const COLOR_FARKLE: Rgb888 = Rgb888::new(0xE7, 0x4C, 0x3C);
-pub const COLOR_BUTTON_ROLL: Rgb888 = Rgb888::new(0x2E, 0xCC, 0x71);
-pub const COLOR_BUTTON_BANK: Rgb888 = Rgb888::new(0xE6, 0x7E, 0x22);
-pub const COLOR_TITLE: Rgb888 = Rgb888::new(0xF0, 0xC0, 0x40);
+pub const COLOR_BG: Rgb888 = Rgb888::new(0x16, 0x16, 0x2A);
+pub const COLOR_DICE_FACE: Rgb888 = Rgb888::new(0xF5, 0xF0, 0xE8);
+pub const COLOR_DICE_PIP: Rgb888 = Rgb888::new(0x1E, 0x1E, 0x2A);
+pub const COLOR_SELECTED: Rgb888 = Rgb888::new(0xFF, 0xC8, 0x47);
+pub const COLOR_HELD: Rgb888 = Rgb888::new(0x9E, 0x9E, 0xB0);
+pub const COLOR_TEXT: Rgb888 = Rgb888::new(0xF0, 0xF0, 0xF5);
+pub const COLOR_TURN_SCORE: Rgb888 = Rgb888::new(0x50, 0xE3, 0xC2);
+pub const COLOR_FARKLE: Rgb888 = Rgb888::new(0xFF, 0x5C, 0x5C);
+pub const COLOR_BUTTON_ROLL: Rgb888 = Rgb888::new(0x38, 0xD9, 0x7C);
+pub const COLOR_BUTTON_BANK: Rgb888 = Rgb888::new(0xFF, 0x8C, 0x42);
+pub const COLOR_TITLE: Rgb888 = Rgb888::new(0xFF, 0xAA, 0x2B);

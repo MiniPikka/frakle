@@ -26,10 +26,10 @@ pub fn draw_all_dice(fb: &mut Framebuffer, game: &Game) {
     }
 }
 
-const COLOR_CURSOR: Rgb888 = Rgb888::new(0xCC, 0xCC, 0xFF);
+const COLOR_CURSOR: Rgb888 = Rgb888::new(0x80, 0xD0, 0xFF);
 const COLOR_CURSOR_ON_SEL: Rgb888 = Rgb888::new(0xFF, 0xFF, 0xFF);
-const COLOR_SHADOW: Rgb888 = Rgb888::new(0x10, 0x10, 0x20);
-const COLOR_HELD_PIP: Rgb888 = Rgb888::new(0x66, 0x66, 0x66);
+const COLOR_SHADOW: Rgb888 = Rgb888::new(0x0C, 0x0C, 0x1A);
+const COLOR_HELD_PIP: Rgb888 = Rgb888::new(0x6A, 0x6A, 0x80);
 
 pub fn draw_die(
     fb: &mut Framebuffer,
