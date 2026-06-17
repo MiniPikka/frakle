@@ -12,14 +12,32 @@
 use core::arch::asm;
 
 // Predefined sound effect sequences: (frequency_hz, duration_us)
+//
+// Design notes:
+// - All effects <150ms total — snappy, never block the game loop
+// - Pitch direction = semantic: rising = positive, falling = negative
+// - Frequencies stay >250Hz (PC speaker drops off below ~200Hz)
+// - Dice roll uses rapid alternation to simulate physical rattle
+
+// Quick rattling burst — alternating high freqs mimic dice bounce (~75ms)
 pub const SND_ROLL: &[(u32, u64)] = &[
-    (800, 20000), (1000, 20000), (800, 20000), (1000, 20000),
-    (800, 20000), (1000, 20000), (1200, 30000),
+    (1600, 12000), (2000, 12000), (1400, 12000),
+    (1800, 12000), (2200, 12000), (1200, 15000),
 ];
-pub const SND_BANK: &[(u32, u64)] = &[(600, 80000), (900, 80000), (1200, 100000)];
-pub const SND_FARKLE: &[(u32, u64)] = &[(200, 100000), (150, 200000)];
+
+// Rising arpeggio — "ka-ching" satisfaction (~55ms)
+pub const SND_BANK: &[(u32, u64)] = &[
+    (800, 18000), (1200, 18000), (1600, 20000),
+];
+
+// Descending boo — quick disappointed tone (~60ms)
+pub const SND_FARKLE: &[(u32, u64)] = &[
+    (600, 20000), (400, 20000), (300, 20000),
+];
+
+// Triumphant fanfare — C-E-G-C' major arpeggio (~125ms)
 pub const SND_VICTORY: &[(u32, u64)] = &[
-    (523, 120000), (659, 120000), (784, 120000), (1047, 200000),
+    (523, 30000), (659, 30000), (784, 30000), (1047, 35000),
 ];
 
 // PIT base clock: 1.193182 MHz
