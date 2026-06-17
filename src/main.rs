@@ -77,6 +77,29 @@ fn phase_kind(p: &GamePhase) -> u8 {
     }
 }
 
+/// Try to switch GOP to the highest available resolution ≥1024 wide.
+fn try_set_hires(gop: &mut GraphicsOutput, bs: &BootServices) {
+    let (cur_w, cur_h) = gop.current_mode_info().resolution();
+    let mut best: Option<uefi::proto::console::gop::Mode> = None;
+    let mut best_pixels = 0usize;
+    for mode in gop.modes(bs) {
+        let (w, h) = mode.info().resolution();
+        if w >= 1024 && h >= 768 {
+            let pixels = w * h;
+            if pixels > best_pixels {
+                best_pixels = pixels;
+                best = Some(mode);
+            }
+        }
+    }
+    if let Some(mode) = best {
+        let (w, h) = mode.info().resolution();
+        if w > cur_w || h > cur_h {
+            let _ = gop.set_mode(&mode);
+        }
+    }
+}
+
 #[entry]
 fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
     uefi::helpers::init(&mut system_table).unwrap();
@@ -88,6 +111,10 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     let gop_handle = bs.get_handle_for_protocol::<GraphicsOutput>().unwrap();
     let mut gop = bs.open_protocol_exclusive::<GraphicsOutput>(gop_handle).unwrap();
+
+    // Try to set a higher resolution for sharper visuals
+    try_set_hires(&mut gop, bs);
+
     let (width, height) = gop.current_mode_info().resolution();
     let mut fb = Framebuffer::new(width, height);
 

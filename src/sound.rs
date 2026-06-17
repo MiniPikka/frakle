@@ -35,9 +35,11 @@ pub const SND_FARKLE: &[(u32, u64)] = &[
     (600, 20000), (400, 20000), (300, 20000),
 ];
 
-// Triumphant fanfare — C-E-G-C' major arpeggio (~125ms)
+// Festive victory fanfare — two ascending runs with rhythmic punch (~400ms)
 pub const SND_VICTORY: &[(u32, u64)] = &[
-    (523, 30000), (659, 30000), (784, 30000), (1047, 35000),
+    (523, 40000), (659, 40000), (784, 40000),
+    (1047, 60000), (784, 30000), (1047, 80000),
+    (1318, 40000), (1047, 40000), (1318, 80000),
 ];
 
 // PIT base clock: 1.193182 MHz
