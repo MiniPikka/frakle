@@ -44,6 +44,7 @@ qemu-system-x86_64 \
     -drive "format=raw,file=$IMG,cache=unsafe" \
     -no-reboot -no-shutdown \
     -machine pc,pcspk-audiodev=snd0 -audiodev pa,id=snd0 \
+    -device virtio-vga -vga none \
     -m 256M -cpu qemu64 \
     -d int,cpu_reset -D "$PROJECT_DIR/qemu_crash.log" \
     -s \

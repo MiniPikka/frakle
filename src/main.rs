@@ -77,25 +77,39 @@ fn phase_kind(p: &GamePhase) -> u8 {
     }
 }
 
-/// Try to switch GOP to the highest available resolution ≥1024 wide.
+/// Try to switch GOP to a 16:9 resolution (1280x720 or higher).
+/// Falls back to the largest available mode ≥1024 wide.
 fn try_set_hires(gop: &mut GraphicsOutput, bs: &BootServices) {
     let (cur_w, cur_h) = gop.current_mode_info().resolution();
-    let mut best: Option<uefi::proto::console::gop::Mode> = None;
-    let mut best_pixels = 0usize;
+    let mut best_w = 0usize;
+    let mut best_h = 0usize;
+    let mut best_is_wide = false;
     for mode in gop.modes(bs) {
         let (w, h) = mode.info().resolution();
-        if w >= 1024 && h >= 768 {
-            let pixels = w * h;
-            if pixels > best_pixels {
-                best_pixels = pixels;
-                best = Some(mode);
-            }
+        if w < 1024 { continue; }
+        let pixels = w * h;
+        let is_wide = (w * 9).abs_diff(h * 16) < w || (w * 10).abs_diff(h * 16) < w * 2;
+        let dominated = if is_wide && !best_is_wide {
+            true
+        } else if is_wide == best_is_wide {
+            pixels > best_w * best_h
+        } else {
+            false
+        };
+        if dominated {
+            best_w = w;
+            best_h = h;
+            best_is_wide = is_wide;
         }
     }
-    if let Some(mode) = best {
-        let (w, h) = mode.info().resolution();
-        if w > cur_w || h > cur_h {
-            let _ = gop.set_mode(&mode);
+    if best_w > cur_w || best_h > cur_h {
+        // Find the mode again and set it
+        for mode in gop.modes(bs) {
+            let (w, h) = mode.info().resolution();
+            if w == best_w && h == best_h {
+                let _ = gop.set_mode(&mode);
+                return;
+            }
         }
     }
 }
