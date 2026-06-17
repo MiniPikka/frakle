@@ -26,6 +26,11 @@ pub fn draw_all_dice(fb: &mut Framebuffer, game: &Game) {
     }
 }
 
+const COLOR_CURSOR: Rgb888 = Rgb888::new(0xCC, 0xCC, 0xFF);
+const COLOR_CURSOR_ON_SEL: Rgb888 = Rgb888::new(0xFF, 0xFF, 0xFF);
+const COLOR_SHADOW: Rgb888 = Rgb888::new(0x10, 0x10, 0x20);
+const COLOR_HELD_PIP: Rgb888 = Rgb888::new(0x66, 0x66, 0x66);
+
 pub fn draw_die(
     fb: &mut Framebuffer,
     x: i32,
@@ -40,34 +45,29 @@ pub fn draw_die(
 
     // Die shadow
     let _ = Rectangle::new(Point::new(x + 2, y + 2), Size::new(s as u32, s as u32))
-        .draw_styled(
-            &PrimitiveStyle::with_fill(Rgb888::new(0x10, 0x10, 0x20)),
-            fb,
-        );
+        .draw_styled(&PrimitiveStyle::with_fill(COLOR_SHADOW), fb);
 
     // Die face
     let _ = Rectangle::new(Point::new(x, y), Size::new(s as u32, s as u32))
         .draw_styled(&PrimitiveStyle::with_fill(face_color), fb);
 
-    // Die border
-    let border_color = if is_selected {
-        COLOR_SELECTED
+    // Die border — cursor-on-selected gets a bright white thick border
+    let (border_color, border_w) = if is_cursor && is_selected {
+        (COLOR_CURSOR_ON_SEL, 3)
+    } else if is_selected {
+        (COLOR_SELECTED, 2)
     } else if is_cursor {
-        Rgb888::new(0xCC, 0xCC, 0xFF)
+        (COLOR_CURSOR, 2)
     } else {
-        COLOR_DICE_PIP
+        (COLOR_DICE_PIP, 1)
     };
-    let border = PrimitiveStyle::with_stroke(border_color, 2);
+    let border = PrimitiveStyle::with_stroke(border_color, border_w);
     let _ = Rectangle::new(Point::new(x, y), Size::new(s as u32, s as u32))
         .draw_styled(&border, fb);
 
     // Draw pips
     if (1..=6).contains(&value) {
-        let pip_color = if is_held {
-            Rgb888::new(0x66, 0x66, 0x66)
-        } else {
-            COLOR_DICE_PIP
-        };
+        let pip_color = if is_held { COLOR_HELD_PIP } else { COLOR_DICE_PIP };
         let pip_style = PrimitiveStyle::with_fill(pip_color);
         for &(px, py) in layout::pip_positions(value) {
             let cx = x + px;
@@ -77,19 +77,21 @@ pub fn draw_die(
         }
     }
 
-    // Selection indicator below die
-    if is_selected {
-        let marker_y = y + s + 6;
-        let marker_x = x + s / 2;
-        let marker_style = PrimitiveStyle::with_fill(COLOR_SELECTED);
+    // Marker below die: selected = gold dot, cursor = blue ring,
+    // cursor-on-selected = gold dot with white ring around it
+    let marker_y = y + s + 6;
+    let marker_x = x + s / 2;
+    if is_selected && is_cursor {
         let _ = Circle::new(Point::new(marker_x, marker_y), 5)
-            .draw_styled(&marker_style, fb);
+            .draw_styled(&PrimitiveStyle::with_fill(COLOR_SELECTED), fb);
+        let _ = Circle::new(Point::new(marker_x, marker_y), 7)
+            .draw_styled(&PrimitiveStyle::with_stroke(COLOR_CURSOR_ON_SEL, 1), fb);
+    } else if is_selected {
+        let _ = Circle::new(Point::new(marker_x, marker_y), 5)
+            .draw_styled(&PrimitiveStyle::with_fill(COLOR_SELECTED), fb);
     } else if is_cursor {
-        let marker_y = y + s + 6;
-        let marker_x = x + s / 2;
-        let marker_outline = PrimitiveStyle::with_stroke(Rgb888::new(0xCC, 0xCC, 0xFF), 1);
         let _ = Circle::new(Point::new(marker_x, marker_y), 5)
-            .draw_styled(&marker_outline, fb);
+            .draw_styled(&PrimitiveStyle::with_stroke(COLOR_CURSOR, 1), fb);
     }
 }
 
