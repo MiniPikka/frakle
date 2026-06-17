@@ -79,7 +79,8 @@ fn phase_kind(p: &GamePhase) -> u8 {
 
 /// Try to switch GOP to a 16:9 resolution (1280x720 or higher).
 /// Falls back to the largest available mode ≥1024 wide.
-fn try_set_hires(gop: &mut GraphicsOutput, bs: &BootServices) {
+/// Returns the final (width, height) after any mode change.
+fn try_set_hires(gop: &mut GraphicsOutput, bs: &BootServices) -> (usize, usize) {
     let (cur_w, cur_h) = gop.current_mode_info().resolution();
     let mut best_w = 0usize;
     let mut best_h = 0usize;
@@ -108,8 +109,21 @@ fn try_set_hires(gop: &mut GraphicsOutput, bs: &BootServices) {
             let (w, h) = mode.info().resolution();
             if w == best_w && h == best_h {
                 let _ = gop.set_mode(&mode);
-                return;
+                return (best_w, best_h);
             }
+        }
+    }
+    (cur_w, cur_h)
+}
+
+/// Re-apply the current GOP mode to force OVMF to refresh the display.
+/// This works around OVMF's GOP driver going stale after extended use.
+fn refresh_gop(gop: &mut GraphicsOutput, bs: &BootServices, target_w: usize, target_h: usize) {
+    for mode in gop.modes(bs) {
+        let (w, h) = mode.info().resolution();
+        if w == target_w && h == target_h {
+            let _ = gop.set_mode(&mode);
+            return;
         }
     }
 }
@@ -127,7 +141,7 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let mut gop = bs.open_protocol_exclusive::<GraphicsOutput>(gop_handle).unwrap();
 
     // Try to set a higher resolution for sharper visuals
-    try_set_hires(&mut gop, bs);
+    let (res_w, res_h) = try_set_hires(&mut gop, bs);
 
     let (width, height) = gop.current_mode_info().resolution();
     let mut fb = Framebuffer::new(width, height);
@@ -232,6 +246,11 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
             let mut wd = FmtBuf::<64>::new();
             let _ = write!(wd, "STUCK! {}f max:{}", phase_frames, max_consecutive);
             fb.draw_text_small(10, 32, wd.as_str(), Rgb888::new(255, 0, 0));
+        }
+
+        // Periodically re-apply GOP mode to prevent OVMF display stalling
+        if frame_count.is_multiple_of(300) {
+            refresh_gop(&mut gop, bs, res_w, res_h);
         }
 
         fb.present(&mut gop);
