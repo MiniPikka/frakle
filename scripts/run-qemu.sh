@@ -87,7 +87,8 @@ QEMU_ARGS=(
     -D "$PROJECT_DIR/qemu_crash.log"
     -no-reboot
     -no-shutdown
-    -machine pc
+    -machine pc,pcspk-audiodev=snd0
+    -audiodev pa,id=snd0
     -m 256M
     -cpu qemu64
 )

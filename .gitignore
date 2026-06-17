@@ -3,6 +3,9 @@ target/
 test_fat.img
 test_image/
 esp.img
+*.fd
+
+# QEMU logs (generated at runtime)
 qemu_serial.log
 qemu_crash.log
 

@@ -43,7 +43,8 @@ qemu-system-x86_64 \
     -drive "if=pflash,format=raw,file=$OVMF_VARS" \
     -drive "format=raw,file=$IMG,cache=unsafe" \
     -no-reboot -no-shutdown \
-    -machine pc -m 256M -cpu qemu64 \
+    -machine pc,pcspk-audiodev=snd0 -audiodev pa,id=snd0 \
+    -m 256M -cpu qemu64 \
     -d int,cpu_reset -D "$PROJECT_DIR/qemu_crash.log" \
     -s \
     "$@"

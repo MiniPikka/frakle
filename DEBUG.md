@@ -14,7 +14,7 @@
 ### 2. QEMU 本地测试
 
 ```bash
-# 桌面环境
+# 桌面环境（自动检测显示后端，带 PC Speaker 音频）
 bash scripts/run-qemu.sh
 
 # 无头模式
@@ -28,6 +28,7 @@ gdb -ex "target remote :1234" target/x86_64-unknown-uefi/debug/frakle.efi
 
 QEMU 脚本使用 pflash + mtools 创建的 FAT16 镜像（非 `fat:rw:`），避免 QEMU vvfat 驱动崩溃。
 `cache=unsafe` 使日志写入更快刷新到宿主文件。
+音频通过 `-machine pcspk-audiodev=snd0 -audiodev pa,id=snd0` 输出 PC Speaker 方波。
 
 ### 3. QEMU CPU 异常日志
 
@@ -92,6 +93,16 @@ gdb -batch \
 2. ~~`gop.blt()` 固件 bug~~ → 改为直接写 GOP 帧缓冲（`copy_nonoverlapping` 按行复制）
 3. ~~RNG 固定种子~~ → RDTSC 随机种子
 4. 添加了 panic handler、阶段看门狗、帧计数器屏幕叠加层
+
+## 部署到真机
+
+```bash
+# 交互式选择设备
+bash scripts/deploy-usb.sh
+
+# 快速部署到 /dev/sda
+sudo scripts/quick-deploy.sh
+```
 
 ## 项目质量
 
