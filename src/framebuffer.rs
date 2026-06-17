@@ -51,19 +51,37 @@ impl Framebuffer {
     pub fn present(&mut self, gop: &mut GraphicsOutput) {
         let mode = gop.current_mode_info();
         let stride = mode.stride();
+        let (fb_w, fb_h) = mode.resolution();
         let mut fb = gop.frame_buffer();
         let dst = fb.as_mut_ptr();
+        let fb_size = fb.size();
 
-        let h = self.height.min(mode.resolution().1);
-        let w = self.width.min(mode.resolution().0);
-        let row_bytes = w * 4; // 4 bytes per BGRx pixel
+        let h = self.height.min(fb_h);
+        let w = self.width.min(fb_w);
+        let row_bytes = w * 4;
+
+        // Guard: verify the GOP framebuffer is large enough for our writes
+        let needed = (h.saturating_sub(1)) * stride * 4 + row_bytes;
+        if fb_size < needed || dst.is_null() {
+            return;
+        }
 
         for y in 0..h {
             let src = self.buffer[y * self.width..].as_ptr() as *const u8;
-            // Safety: both src and dst are valid for row_bytes, stride matches FB layout
             unsafe {
                 core::ptr::copy_nonoverlapping(src, dst.add(y * stride * 4), row_bytes);
             }
+        }
+
+        // Flush CPU cache lines so writes reach the GOP framebuffer in memory.
+        unsafe {
+            let mut p = dst;
+            let end = dst.add(h * stride * 4);
+            while p < end {
+                core::arch::asm!("clflush [{}]", in(reg) p, options(nostack, preserves_flags));
+                p = p.add(64);
+            }
+            core::arch::asm!("mfence", options(nostack, preserves_flags));
         }
     }
 

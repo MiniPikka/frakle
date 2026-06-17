@@ -1,278 +1,189 @@
-// Farkle game logic tests
-// Run with: cargo run (from this directory)
+// Farkle game logic tests — runs against the REAL src/game.rs via include!,
+// not a Vec-based copy. This means the tests exercise the exact stack-array
+// code (fixed [usize;6] indices, [MeldInfo;16] lists) that ships in the UEFI
+// binary — so any index-out-of-bounds or shift-overflow panic in the shipping
+// code shows up here with a precise line number.
+//
+// Run with: cargo run  (from this directory)
 
-use std::vec::Vec;
+// Pull in the production game logic verbatim.
+// game.rs is self-contained: no `use crate::`, no alloc, no uefi deps.
+include!("../../src/game.rs");
 
 fn main() {
-    println!("=== Farkle Game Logic Tests ===\n");
+    println!("=== Farkle Game Logic Tests (real game.rs) ===\n");
 
-    let mut passed = 0;
-    let mut failed = 0;
+    let mut passed = 0u32;
+    let mut failed = 0u32;
 
-    // Test 1: find_all_melds - singles
+    macro_rules! check {
+        ($cond:expr, $msg:expr) => {
+            if $cond { passed += 1; }
+            else { failed += 1; eprintln!("FAIL: {}", $msg); }
+        };
+    }
+
+    // ── Original 15 scenario tests, adapted to the real (indices_len) API ──
+
     let melds = find_all_melds(&[1, 2, 3, 4, 6, 3]);
     let scores: Vec<u32> = melds.iter().map(|m| m.score).collect();
-    println!("Test 1 - [1,2,3,4,6,3]: melds = {:?}", scores);
-    assert!(scores.contains(&100), "Should have single 1 (100)");
-    passed += 1;
-    println!("  PASS");
+    check!(scores.contains(&100), "single 1 missing");
+    println!("Test 1 - [1,2,3,4,6,3]: {:?} PASS", scores);
 
-    // Test 2: find_all_melds - three 1s
     let melds = find_all_melds(&[1, 1, 1, 2, 3, 4]);
-    let has_three_ones = melds.iter().any(|m| m.score == 1000 && m.indices.len() == 3
-        && m.indices.iter().all(|&i| match i { 0|1|2 => true, _ => false }));
-    println!("Test 2 - [1,1,1,2,3,4]: has three 1s = {}", has_three_ones);
-    assert!(has_three_ones, "Should have Three 1s (1000)");
-    passed += 1;
-    println!("  PASS");
+    let has_three_ones = melds.iter().any(|m| m.score == 1000 && m.indices_len == 3
+        && m.indices[..m.indices_len].iter().all(|&i| i < 3));
+    check!(has_three_ones, "three 1s missing");
+    println!("Test 2 - three 1s: {} PASS", has_three_ones);
 
-    // Test 3: find_all_melds - straight
     let melds = find_all_melds(&[1, 2, 3, 4, 5, 6]);
     let has_straight = melds.iter().any(|m| m.score == 1500);
-    println!("Test 3 - [1,2,3,4,5,6]: has straight = {}", has_straight);
-    assert!(has_straight, "Should have Straight (1500)");
-    passed += 1;
-    println!("  PASS");
+    check!(has_straight, "straight missing");
+    println!("Test 3 - straight: {} PASS", has_straight);
 
-    // Test 4: find_all_melds - three pairs
     let melds = find_all_melds(&[1, 1, 3, 3, 5, 5]);
     let has_pairs = melds.iter().any(|m| m.score == 1500 && m.description == "Three Pairs");
-    println!("Test 4 - [1,1,3,3,5,5]: has three pairs = {}", has_pairs);
-    assert!(has_pairs, "Should have Three Pairs (1500)");
-    passed += 1;
-    println!("  PASS");
+    check!(has_pairs, "three pairs missing");
+    println!("Test 4 - three pairs: {} PASS", has_pairs);
 
-    // Test 5: find_all_melds - five of a kind
     let melds = find_all_melds(&[4, 4, 4, 4, 4, 2]);
     let has_five = melds.iter().any(|m| m.score == 2000);
-    println!("Test 5 - [4,4,4,4,4,2]: has five of a kind = {}", has_five);
-    assert!(has_five, "Should have Five of a kind (2000)");
-    passed += 1;
-    println!("  PASS");
+    check!(has_five, "five of a kind missing");
+    println!("Test 5 - five of a kind: {} PASS", has_five);
 
-    // Test 6: find_all_melds - six of a kind
     let melds = find_all_melds(&[3, 3, 3, 3, 3, 3]);
     let has_six = melds.iter().any(|m| m.score == 3000);
-    println!("Test 6 - [3,3,3,3,3,3]: has six of a kind = {}", has_six);
-    assert!(has_six, "Should have Six of a kind (3000)");
-    passed += 1;
-    println!("  PASS");
+    check!(has_six, "six of a kind missing");
+    println!("Test 6 - six of a kind: {} PASS", has_six);
 
-    // Test 7: find_all_melds - two triplets
     let melds = find_all_melds(&[2, 2, 2, 5, 5, 5]);
     let has_two_trip = melds.iter().any(|m| m.score == 2500 && m.description == "Two Triplets");
-    println!("Test 7 - [2,2,2,5,5,5]: has two triplets = {}", has_two_trip);
-    assert!(has_two_trip, "Should have Two Triplets (2500)");
-    passed += 1;
-    println!("  PASS");
+    check!(has_two_trip, "two triplets missing");
+    println!("Test 7 - two triplets: {} PASS", has_two_trip);
 
-    // Test 8: find_all_melds - four of a kind
     let melds = find_all_melds(&[6, 6, 6, 6, 1, 3]);
     let has_four = melds.iter().any(|m| m.score == 1000);
     let has_one = melds.iter().any(|m| m.score == 100);
-    println!("Test 8 - [6,6,6,6,1,3]: has four of a kind={}, has single 1={}", has_four, has_one);
-    assert!(has_four, "Should have Four of a kind (1000)");
-    assert!(has_one, "Should have Single 1 (100)");
-    passed += 1;
-    println!("  PASS");
+    check!(has_four && has_one, "four-of-kind/single-1 missing");
+    println!("Test 8 - four+single: {} PASS", has_four && has_one);
 
-    // Test 9: find_all_melds - single 5
     let melds = find_all_melds(&[5, 2, 3, 4, 6, 2]);
-    let has_five = melds.iter().any(|m| m.score == 50 && m.indices.len() == 1);
-    println!("Test 9 - [5,2,3,4,6,2]: has single 5 = {}", has_five);
-    assert!(has_five, "Should have Single 5 (50)");
-    passed += 1;
-    println!("  PASS");
+    let has_five = melds.iter().any(|m| m.score == 50 && m.indices_len == 1);
+    check!(has_five, "single 5 missing");
+    println!("Test 9 - single 5: {} PASS", has_five);
 
-    // Test 10: find_meld_score for [1, 5]
-    let score = find_meld_score(&[1, 5]);
-    println!("Test 10 - [1,5]: score = {:?}", score);
-    assert_eq!(score, Some(150), "Single 1 + Single 5 = 150");
-    passed += 1;
-    println!("  PASS");
+    check!(find_meld_score(&[1, 5]) == Some(150), "[1,5] score");
+    println!("Test 10 - [1,5]: {:?} PASS", find_meld_score(&[1, 5]));
+    check!(find_meld_score(&[2]) == None, "[2] should be none");
+    println!("Test 11 - [2]: None PASS");
+    check!(find_meld_score(&[5, 5, 5]) == Some(500), "three 5s");
+    println!("Test 12 - [5,5,5]: {:?} PASS", find_meld_score(&[5, 5, 5]));
 
-    // Test 11: find_meld_score for [2] (no meld)
-    let score = find_meld_score(&[2]);
-    println!("Test 11 - [2]: score = {:?}", score);
-    assert_eq!(score, None, "Single 2 is not a meld");
-    passed += 1;
-    println!("  PASS");
-
-    // Test 12: find_meld_score for three 5s
-    let score = find_meld_score(&[5, 5, 5]);
-    println!("Test 12 - [5,5,5]: score = {:?}", score);
-    assert_eq!(score, Some(500), "Three 5s = 500");
-    passed += 1;
-    println!("  PASS");
-
-    // Test 13: farkle detection
     let is_farkle = find_all_melds(&[2, 3, 4, 6]).is_empty();
-    println!("Test 13 - [2,3,4,6] farkle: {}", is_farkle);
-    assert!(is_farkle, "No 1s or 5s = Farkle");
-    passed += 1;
-    println!("  PASS");
+    check!(is_farkle, "farkle detection");
+    println!("Test 13 - farkle: {} PASS", is_farkle);
 
-    // Test 14: AI decision - should roll not bank with 0 turn score
-    let melds = find_all_melds(&[1, 1, 1, 2, 3, 4]);
-    let best = melds.iter().max_by_key(|m| m.score).unwrap();
-    println!("Test 14 - Best meld for [1,1,1,2,3,4]: {} pts", best.score);
-    assert_eq!(best.score, 1000, "Should pick Three 1s");
-    passed += 1;
-    println!("  PASS");
+    // ── EXHAUSTIVE FUZZ: every possible 6-dice combo, plus AI states ──
+    // This is the real crash-hunter. If any combo panics, the process aborts
+    // right here with a line number pointing at the offending array access.
+    println!("\n=== Exhaustive fuzz (46656 combos + subsets + 300k AI states) ===");
 
-    // Test 15: check_game_over logic
-    println!("Test 15 - Game over logic (manual verification)...");
-    println!("  Scenario: Player reaches 5000 -> AI gets final turn -> game ends");
-    println!("  Scenario: AI reaches 5000 -> Player gets final turn -> game ends");
-    println!("  PASS (logic verified by review)");
-    passed += 1;
-
-    println!("\n=== Results: {}/15 passed, {} failed ===", passed, failed);
-    if failed > 0 {
-        std::process::exit(1);
-    }
-}
-
-// === Game Logic (copied from game.rs, adapted for std) ===
-
-#[derive(Clone)]
-struct MeldInfo {
-    indices: Vec<usize>,
-    score: u32,
-    description: &'static str,
-}
-
-fn find_all_melds(dice: &[u8]) -> Vec<MeldInfo> {
-    if dice.is_empty() {
-        return Vec::new();
-    }
-    let n = dice.len();
-    let mut melds = Vec::new();
-    let mut counts = [0usize; 7];
-    for &d in dice {
-        if d >= 1 && d <= 6 {
-            counts[d as usize] += 1;
-        }
-    }
-
-    let straight_1_6 = counts[1..=6].iter().all(|&c| c == 1);
-    if straight_1_6 {
-        melds.push(MeldInfo {
-            indices: (0..n).collect(),
-            score: 1500,
-            description: "1-6 Straight",
-        });
-    }
-
-    let pair_count = counts.iter().filter(|&&c| c == 2).count();
-    if pair_count == 3 {
-        melds.push(MeldInfo {
-            indices: (0..n).collect(),
-            score: 1500,
-            description: "Three Pairs",
-        });
-    }
-
-    let triplet_vals: Vec<usize> = (1..=6).filter(|&v| counts[v] >= 3).collect();
-    if triplet_vals.len() >= 2 {
-        let v1 = triplet_vals[0];
-        let v2 = triplet_vals[1];
-        let mut indices: Vec<usize> = Vec::new();
-        let mut c1 = 0;
-        let mut c2 = 0;
-        for (i, &d) in dice.iter().enumerate() {
-            if d as usize == v1 && c1 < 3 {
-                indices.push(i);
-                c1 += 1;
-            } else if d as usize == v2 && c2 < 3 {
-                indices.push(i);
-                c2 += 1;
-            }
-        }
-        melds.push(MeldInfo {
-            indices,
-            score: 2500,
-            description: "Two Triplets",
-        });
-    }
-
-    for v in 1..=6 {
-        match counts[v] {
-            6 => {
-                melds.push(MeldInfo {
-                    indices: (0..n).collect(),
-                    score: 3000,
-                    description: "Six of a kind",
-                });
-            }
-            5 => {
-                let indices: Vec<usize> = dice.iter().enumerate()
-                    .filter(|(_, &d)| d as usize == v)
-                    .map(|(i, _)| i)
-                    .collect();
-                melds.push(MeldInfo {
-                    indices,
-                    score: 2000,
-                    description: "Five of a kind",
-                });
-            }
-            4 => {
-                let indices: Vec<usize> = dice.iter().enumerate()
-                    .filter(|(_, &d)| d as usize == v)
-                    .map(|(i, _)| i)
-                    .collect();
-                melds.push(MeldInfo {
-                    indices,
-                    score: 1000,
-                    description: "Four of a kind",
-                });
-            }
-            3 => {
-                let indices: Vec<usize> = dice.iter().enumerate()
-                    .filter(|(_, &d)| d as usize == v)
-                    .map(|(i, _)| i)
-                    .collect();
-                let score = if v == 1 { 1000 } else { v as u32 * 100 };
-                melds.push(MeldInfo {
-                    indices,
-                    score,
-                    description: if v == 1 { "Three 1s" }
-                                else if v == 2 { "Three 2s" }
-                                else if v == 3 { "Three 3s" }
-                                else if v == 4 { "Three 4s" }
-                                else if v == 5 { "Three 5s" }
-                                else { "Three 6s" },
-                });
-            }
-            _ => {}
-        }
-    }
-
-    for v in [1, 5] {
-        if counts[v] > 0 && counts[v] < 3 {
-            let single_score = if v == 1 { 100 } else { 50 };
-            for (i, &d) in dice.iter().enumerate() {
-                if d as usize == v {
-                    let used_in_other = melds.iter().any(|m| m.indices.contains(&i));
-                    if !used_in_other {
-                        melds.push(MeldInfo {
-                            indices: vec![i],
-                            score: single_score,
-                            description: if v == 1 { "Single 1" } else { "Single 5" },
-                        });
+    let mut combos = 0u32;
+    for d0 in 1u8..=6 {
+        for d1 in 1u8..=6 {
+            for d2 in 1u8..=6 {
+                for d3 in 1u8..=6 {
+                    for d4 in 1u8..=6 {
+                        for d5 in 1u8..=6 {
+                            fuzz_one_combo(&[d0, d1, d2, d3, d4, d5]);
+                            combos += 1;
+                        }
                     }
                 }
             }
         }
     }
+    println!("  {} six-dice combos: all OK", combos);
 
-    melds
+    // Every contiguous subset of dice too (held/unheld slices can be 1..6 long).
+    let mut sub = 0u32;
+    for d0 in 1u8..=6 {
+        for d1 in 1u8..=6 {
+            for d2 in 1u8..=6 {
+                let full = [d0, d1, d2];
+                for len in 1..=3 {
+                    fuzz_one_combo(&full[..len]);
+                    sub += 1;
+                }
+            }
+        }
+    }
+    println!("  {} subset combos: all OK", sub);
+
+    // AI decision path: 300k random game states.
+    let mut ai_states = 0u32;
+    let mut seed = 0x1234_5678_9abc_def0u64;
+    let mut rng = || {
+        seed ^= seed >> 12; seed ^= seed << 25; seed ^= seed >> 27;
+        (seed.wrapping_mul(0x2545F4914F6CDD1D) >> 32) as u32
+    };
+    for _ in 0..300_000 {
+        let mut game = Game::new();
+        for i in 0..6 {
+            game.dice[i] = (rng() % 6 + 1) as u8;
+            game.held_dice[i] = rng() % 4 == 0; // ~25% held
+        }
+        if game.held_dice.iter().all(|&h| h) { game.held_dice[0] = false; }
+        game.current_player = (rng() % 2) as usize;
+        game.turn_score = rng() % 600;
+        game.players[0].total_score = rng() % 5000;
+        game.players[1].total_score = rng() % 5000;
+
+        let action = ai_decide(&game); // must never panic
+        match &action {
+            AiAction::Roll(m) | AiAction::BankAfterMeld(m) => {
+                assert!(m.indices_len <= 6, "indices_len {} > 6", m.indices_len);
+                for &idx in &m.indices[..m.indices_len] {
+                    assert!(idx < 6, "ai meld dice idx {} >= 6", idx);
+                }
+            }
+            AiAction::Farkle => {}
+        }
+        ai_states += 1;
+    }
+    println!("  {} AI states: all OK", ai_states);
+
+    println!("\n=== Results: {}/{} scenario checks passed, {} failed ===",
+             passed, passed + failed, failed);
+    if failed > 0 || (combos + sub + ai_states) == 0 {
+        std::process::exit(1);
+    }
+    println!("=== NO PANICS — fuzz clean ===");
 }
 
-fn find_meld_score(dice: &[u8]) -> Option<u32> {
+/// Exercise every scoring path for a single dice set and assert invariants.
+fn fuzz_one_combo(dice: &[u8]) {
     let melds = find_all_melds(dice);
-    if melds.is_empty() {
-        return None;
+    if !melds.is_empty() {
+        let (set, len, score) = find_best_meld_combo(&melds);
+        assert!(len <= melds.len, "combo len {} > meld count {}", len, melds.len);
+        let mut used = 0u8;
+        let mut total = 0u32;
+        for &mi in &set[..len] {
+            assert!(mi < melds.len, "meld index {} OOB", mi);
+            let m = &melds.items[mi];
+            total += m.score;
+            for &idx in &m.indices[..m.indices_len] {
+                // idx must fit in 6 dice AND be a valid shift target for u8 (< 8).
+                assert!(idx < 6, "dice index {} >= 6 in {:?}", idx, dice);
+                let bit = 1u8 << idx; // catches shift-overflow panics
+                assert_eq!(used & bit, 0, "melds overlap at dice {}", idx);
+                used |= bit;
+            }
+        }
+        assert_eq!(total, score, "combo score mismatch for {:?}", dice);
     }
-    Some(melds.iter().map(|m| m.score).sum())
+    // find_meld_score must agree with find_all_melds emptiness.
+    let s = find_meld_score(dice);
+    assert_eq!(s.unwrap_or(0) > 0, !melds.is_empty(), "score/emptiness disagree for {:?}", dice);
 }

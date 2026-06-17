@@ -55,6 +55,28 @@ fn phase_short(phase: &GamePhase) -> &'static str {
     }
 }
 
+/// Phase kind for change-detection — ignores per-frame counters in
+/// Rolling/Farkle/Banking/AiShowMeld/AiRolling/AiSelecting so we don't
+/// spam the log file every animation frame.
+fn phase_kind(p: &GamePhase) -> u8 {
+    match p {
+        GamePhase::Title => 0,
+        GamePhase::PlayerTurn(tp) => match tp {
+            TurnPhase::ReadyToRoll => 1,
+            TurnPhase::Rolling { .. } => 2,
+            TurnPhase::Selecting => 3,
+            TurnPhase::Farkle { .. } => 4,
+            TurnPhase::Banking { .. } => 5,
+        },
+        GamePhase::AiTurn => 6,
+        GamePhase::AiShowMeld { .. } => 7,
+        GamePhase::AiRolling { .. } => 8,
+        GamePhase::AiSelecting { .. } => 9,
+        GamePhase::GameOver => 10,
+        GamePhase::Quit => 11,
+    }
+}
+
 #[entry]
 fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
     uefi::helpers::init(&mut system_table).unwrap();
@@ -84,7 +106,7 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     let mut frame_count: u32 = 0;
     let mut phase_frames: u32 = 0;
-    let mut prev_phase: GamePhase = game.phase;
+    let mut prev_phase_kind: u8 = phase_kind(&game.phase);
     let mut max_consecutive: u32 = 0;
 
     loop {
@@ -112,7 +134,7 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
         process(&mut game, key, &mut rng, &mut effects, &mut snd);
 
         // Log game over
-        if matches!(game.phase, GamePhase::GameOver) && !matches!(prev_phase, GamePhase::GameOver) {
+        if phase_kind(&game.phase) == 10 && prev_phase_kind != 10 {
             let w = game.winner.unwrap_or(0);
             let mut gb = FmtBuf::<64>::new();
             let _ = write!(gb, "GAME OVER! Winner=P{} P0:{} P1:{}",
@@ -121,14 +143,15 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
         }
 
         // Track phase changes for watchdog + log
-        if game.phase != prev_phase {
+        let cur_kind = phase_kind(&game.phase);
+        if cur_kind != prev_phase_kind {
             let mut pb = FmtBuf::<32>::new();
             let _ = write!(pb, "{}", phase_short(&game.phase));
             logger::log_game_state(image, bs, pb.as_str(),
                 game.current_player,
                 game.players[game.current_player].total_score,
                 game.turn_score, &game.dice, &game.held_dice);
-            prev_phase = game.phase;
+            prev_phase_kind = cur_kind;
             phase_frames = 0;
         }
 
@@ -443,4 +466,60 @@ fn roll_animate_dice(game: &mut Game, rng: &mut SimpleRng) {
 fn flash(game: &mut Game, msg: &'static str) {
     game.flash_msg = msg;
     game.flash_frames = 45;
+}
+
+// ── Panic handler ──────────────────────────────────────────────────────────
+// The default uefi panic handler calls ResetType::SHUTDOWN, which makes QEMU
+// exit with no visible message. We override it to dump the panic location and
+// message to COM1 (serial) via raw I/O — independent of UEFI services, so it
+// works even mid-transition. The QEMU `-serial file:` captures the output.
+
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    // Output banner + location + message to COM1 (0x3F8), char by char.
+    serial_panic_str("\n\n!!! FARKLE PANIC !!!\n");
+    if let Some(loc) = info.location() {
+        let mut b = FmtBuf::<96>::new();
+        let _ = writeln!(b, "at {}:{}:{}", loc.file(), loc.line(), loc.column());
+        serial_panic_str(b.as_str());
+    }
+    if let Some(m) = info.message().as_str() {
+        serial_panic_str(m);
+        serial_panic_str("\n");
+    } else {
+        serial_panic_str("(non-str panic message)\n");
+    }
+    serial_panic_str(">> end panic, halting\n");
+
+    // Halt forever — do NOT shutdown, so QEMU stays open and the serial log
+    // is fully flushed before the process can exit.
+    loop {
+        unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
+    }
+}
+
+/// Write a byte to COM1 THR (transmit holding register), waiting for the
+/// THR-empty bit first. Polling-only, no UEFI calls — safe from panic context.
+#[inline]
+unsafe fn serial_putc(b: u8) {
+    const COM1: u16 = 0x3F8;
+    const LSR: u16 = COM1 + 5;
+    const LSR_THRE: u8 = 0x20;
+    // Wait (bounded) for transmitter ready.
+    let mut spins = 0u32;
+    while {
+        let lsr: u8;
+        core::arch::asm!("in al, dx", in("dx") LSR, out("al") lsr, options(nomem, nostack, preserves_flags));
+        lsr & LSR_THRE == 0
+    } {
+        spins += 1;
+        if spins > 1_000_000 { break; }
+    }
+    core::arch::asm!("out dx, al", in("dx") COM1, in("al") b, options(nomem, nostack, preserves_flags));
+}
+
+fn serial_panic_str(s: &str) {
+    for &b in s.as_bytes() {
+        unsafe { serial_putc(b); }
+    }
 }

@@ -83,7 +83,10 @@ QEMU_ARGS=(
     -drive "format=raw,file=$IMG,cache=unsafe"
     -display "$DISP"
     -serial file:"$PROJECT_DIR/qemu_serial.log"
+    -d int,cpu_reset
+    -D "$PROJECT_DIR/qemu_crash.log"
     -no-reboot
+    -no-shutdown
     -machine pc
     -m 256M
     -cpu qemu64

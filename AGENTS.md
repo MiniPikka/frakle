@@ -81,7 +81,7 @@ src/
 ├── framebuffer.rs   # GOP framebuffer, embedded-graphics DrawTarget
 ├── input.rs         # Keyboard polling (SimpleTextIn)
 ├── effects.rs       # Particles, screen shake, victory effects
-├── sound.rs         # Sound stubs (no hardware access, all unsafe removed)
+├── sound.rs         # Non-blocking PC speaker driver (PIT ch2 + 0x61 gate)
 ├── logger.rs        # File-based debug logging (phase changes, keys, heartbeat)
 └── ui/
     ├── mod.rs       # UI state machine, layout rendering
