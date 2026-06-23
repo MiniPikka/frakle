@@ -9,6 +9,13 @@ fn collect_dice<F: Fn(usize) -> bool>(dice: &[u8; 6], pred: F) -> ([u8; 6], usiz
     (out, n)
 }
 
+/// Safe index into the 2-player array — clamps to [0, 1].
+/// Prevents out-of-bounds access if state is ever corrupted.
+#[inline]
+fn player_idx(idx: usize) -> usize {
+    idx & 1
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GamePhase {
     Title,
@@ -56,6 +63,22 @@ pub struct Game {
     pub ai_meld_name: &'static str,
     pub ai_meld_points: u32,
     pub lang_cn: bool,
+    /// Animated display scores — smoothly count toward actual totals.
+    pub display_scores: [u32; 2],
+    /// Title text breathing brightness (0.6..1.0), driven by Effects.
+    pub title_breathe: f32,
+
+    // ── Gameplay-driven visual state ──
+    /// Consecutive successful banks without farkling (combo streak).
+    pub combo_streak: u32,
+    /// Last meld description for floating text display.
+    pub last_meld_name: &'static str,
+    /// Last meld points.
+    pub last_meld_points: u32,
+    /// Frames remaining to show the meld floating text.
+    pub meld_display_frames: u32,
+    /// Score milestones already triggered (1000, 2000, 3000, 4000).
+    pub milestones_hit: [bool; 4],
 }
 
 #[derive(Clone)]
@@ -106,7 +129,23 @@ impl Game {
             flash_msg: "", flash_frames: 0,
             ai_meld_dice: [false; 6], ai_meld_name: "", ai_meld_points: 0,
             lang_cn: false,
+            display_scores: [0, 0],
+            title_breathe: 1.0,
+            combo_streak: 0,
+            last_meld_name: "",
+            last_meld_points: 0,
+            meld_display_frames: 0,
+            milestones_hit: [false; 4],
         }
+    }
+
+    /// Safe access to the current player — uses `player_idx` to prevent OOB.
+    pub fn current_player(&self) -> &Player {
+        &self.players[player_idx(self.current_player)]
+    }
+
+    pub fn current_player_mut(&mut self) -> &mut Player {
+        &mut self.players[player_idx(self.current_player)]
     }
 
     pub fn roll_dice(&mut self, rng: &mut impl FnMut() -> u8) {
@@ -146,7 +185,7 @@ impl Game {
 
     pub fn bank_score(&mut self) -> u32 {
         let scored = self.turn_score;
-        self.players[self.current_player].total_score += scored;
+        self.current_player_mut().total_score += scored;
         scored
     }
 
@@ -162,8 +201,9 @@ impl Game {
     }
 
     pub fn check_game_over(&mut self) -> Option<usize> {
-        let this_score = self.players[self.current_player].total_score;
-        let other_player = 1 - self.current_player;
+        let cp = player_idx(self.current_player);
+        let other_player = 1 - cp;
+        let this_score = self.players[cp].total_score;
         let other_score = self.players[other_player].total_score;
         if this_score >= 5000 {
             match self.final_turn {
@@ -221,7 +261,7 @@ pub fn ai_decide(game: &Game) -> AiAction {
     let remaining = n - combined_len;
     let should_bank = game.turn_score > 0
         && (score_after >= 500 || remaining <= 1
-            || game.players[game.current_player].total_score + score_after >= 5000
+            || game.current_player().total_score + score_after >= 5000
             || (remaining == 0 && game.turn_score > 300));
 
     let meld_info = MeldInfo {
@@ -312,17 +352,24 @@ pub fn find_all_melds(dice: &[u8]) -> MeldList {
         }
     }
 
+    // Build a bitmask of dice positions already consumed by higher melds.
+    // Each bit represents one dice index (0–5), avoiding the O(n²) linear
+    // scan that previously called `melds.iter().any(|m| ...contains(&i))`.
+    let mut used_mask: u8 = 0;
+    for m in melds.iter() {
+        for &idx in &m.indices[..m.indices_len] {
+            used_mask |= 1 << idx;
+        }
+    }
+
     for v in [1, 5] {
         if counts[v] > 0 && counts[v] < 3 {
             let score = if v == 1 { 100 } else { 50 };
             for (i, &d) in dice.iter().enumerate() {
-                if d as usize == v {
-                    let used = melds.iter().any(|m| m.indices[..m.indices_len].contains(&i));
-                    if !used {
-                        let mut indices = [0usize; 6]; indices[0] = i;
-                        melds.push(MeldInfo { indices, indices_len: 1, score,
-                            description: if v == 1 { "Single 1" } else { "Single 5" } });
-                    }
+                if d as usize == v && (used_mask & (1 << i)) == 0 {
+                    let mut indices = [0usize; 6]; indices[0] = i;
+                    melds.push(MeldInfo { indices, indices_len: 1, score,
+                        description: if v == 1 { "Single 1" } else { "Single 5" } });
                 }
             }
         }

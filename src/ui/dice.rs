@@ -26,10 +26,13 @@ pub fn draw_all_dice(fb: &mut Framebuffer, game: &Game) {
     }
 }
 
-const COLOR_CURSOR: Rgb888 = Rgb888::new(0x80, 0xD0, 0xFF);
-const COLOR_CURSOR_ON_SEL: Rgb888 = Rgb888::new(0xFF, 0xFF, 0xFF);
-const COLOR_SHADOW: Rgb888 = Rgb888::new(0x0C, 0x0C, 0x1A);
-const COLOR_HELD_PIP: Rgb888 = Rgb888::new(0x6A, 0x6A, 0x80);
+// ── Balatro-style dice palette ──
+const COLOR_CURSOR: Rgb888 = Rgb888::new(0x60, 0xA0, 0xE0);    // cool blue highlight
+const COLOR_CURSOR_ON_SEL: Rgb888 = Rgb888::new(0xF0, 0xE0, 0xFF); // bright violet-white
+const COLOR_SHADOW: Rgb888 = Rgb888::new(0x06, 0x04, 0x12);    // deep purple shadow
+const COLOR_HELD_PIP: Rgb888 = Rgb888::new(0x38, 0x38, 0x50);  // muted indigo
+const COLOR_GLOW: Rgb888 = Rgb888::new(0xF0, 0xB0, 0x40);      // gold glow halo
+const COLOR_GLOW_DIM: Rgb888 = Rgb888::new(0x30, 0x20, 0x08);  // dimmed glow for soft halo
 
 pub fn draw_die(
     fb: &mut Framebuffer,
@@ -43,7 +46,24 @@ pub fn draw_die(
     let s = layout::DIE_SIZE;
     let face_color = if is_held { COLOR_HELD } else { COLOR_DICE_FACE };
 
-    // Die shadow
+    // ── Glow halo (Balatro-style bloom) ──
+    // Selected dice get a multi-layered golden glow behind them.
+    // Three layers of decreasing opacity simulate Gaussian blur.
+    if is_selected && is_cursor {
+        let _ = Rectangle::new(Point::new(x - 6, y - 6), Size::new(s as u32 + 12, s as u32 + 12))
+            .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x18, 0x10, 0x04)), fb);
+        let _ = Rectangle::new(Point::new(x - 4, y - 4), Size::new(s as u32 + 8, s as u32 + 8))
+            .draw_styled(&PrimitiveStyle::with_fill(COLOR_GLOW_DIM), fb);
+        let _ = Rectangle::new(Point::new(x - 2, y - 2), Size::new(s as u32 + 4, s as u32 + 4))
+            .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x50, 0x38, 0x10)), fb);
+    } else if is_selected {
+        let _ = Rectangle::new(Point::new(x - 5, y - 5), Size::new(s as u32 + 10, s as u32 + 10))
+            .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x10, 0x08, 0x02)), fb);
+        let _ = Rectangle::new(Point::new(x - 3, y - 3), Size::new(s as u32 + 6, s as u32 + 6))
+            .draw_styled(&PrimitiveStyle::with_fill(COLOR_GLOW_DIM), fb);
+    }
+
+    // Die shadow (offset 2px down-right)
     let _ = Rectangle::new(Point::new(x + 2, y + 2), Size::new(s as u32, s as u32))
         .draw_styled(&PrimitiveStyle::with_fill(COLOR_SHADOW), fb);
 
@@ -51,15 +71,15 @@ pub fn draw_die(
     let _ = Rectangle::new(Point::new(x, y), Size::new(s as u32, s as u32))
         .draw_styled(&PrimitiveStyle::with_fill(face_color), fb);
 
-    // Die border — cursor-on-selected gets a bright white thick border
+    // Die border — Balatro style: gold for selected, blue for cursor, subtle for default
     let (border_color, border_w) = if is_cursor && is_selected {
-        (COLOR_CURSOR_ON_SEL, 3)
+        (COLOR_GLOW, 3)       // bright gold — maximum emphasis
     } else if is_selected {
-        (COLOR_SELECTED, 2)
+        (COLOR_SELECTED, 2)   // gold
     } else if is_cursor {
-        (COLOR_CURSOR, 2)
+        (COLOR_CURSOR, 2)     // cool blue
     } else {
-        (COLOR_DICE_PIP, 1)
+        (COLOR_DICE_PIP, 1)   // subtle dark border
     };
     let border = PrimitiveStyle::with_stroke(border_color, border_w);
     let _ = Rectangle::new(Point::new(x, y), Size::new(s as u32, s as u32))
@@ -77,13 +97,13 @@ pub fn draw_die(
         }
     }
 
-    // Marker below die: selected = gold dot, cursor = blue ring,
-    // cursor-on-selected = gold dot with white ring around it
+    // Marker below die — Balatro style indicators
     let marker_y = y + s + 6;
     let marker_x = x + s / 2;
     if is_selected && is_cursor {
+        // Gold dot + bright ring
         let _ = Circle::new(Point::new(marker_x, marker_y), 5)
-            .draw_styled(&PrimitiveStyle::with_fill(COLOR_SELECTED), fb);
+            .draw_styled(&PrimitiveStyle::with_fill(COLOR_GLOW), fb);
         let _ = Circle::new(Point::new(marker_x, marker_y), 7)
             .draw_styled(&PrimitiveStyle::with_stroke(COLOR_CURSOR_ON_SEL, 1), fb);
     } else if is_selected {

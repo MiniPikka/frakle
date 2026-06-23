@@ -14,7 +14,7 @@ use embedded_graphics::{
 };
 
 use crate::framebuffer::{
-    Framebuffer, COLOR_BG, COLOR_BUTTON_BANK, COLOR_BUTTON_ROLL, COLOR_DICE_FACE,
+    Framebuffer, COLOR_BUTTON_BANK, COLOR_BUTTON_ROLL, COLOR_DICE_FACE,
     COLOR_DICE_PIP, COLOR_FARKLE, COLOR_HELD, COLOR_SELECTED, COLOR_TEXT, COLOR_TITLE, COLOR_TURN_SCORE,
 };
 use crate::game::{Game, GamePhase, TurnPhase};
@@ -23,7 +23,8 @@ use crate::{FmtBuf, fmt_replace};
 use core::fmt::Write;
 
 pub fn render(fb: &mut Framebuffer, game: &Game) {
-    fb.clear(COLOR_BG);
+    // Note: fb.clear() is NOT called here — the animated Background module
+    // handles clearing the framebuffer with the procedural pattern.
     let l = lang::lang(game.lang_cn);
 
     match game.phase {
@@ -55,11 +56,29 @@ fn render_title(fb: &mut Framebuffer, _game: &Game, l: &lang::Lang) {
     let h = fb.height() as i32;
     let center_x = w / 2;
 
+    // Balatro-style header bar — solid near-black
     let _ = Rectangle::new(Point::new(0, 0), Size::new(w as u32, 36))
-        .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x10, 0x10, 0x22)), fb);
+        .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x06, 0x04, 0x10)), fb);
 
-    let title_style = MonoTextStyle::new(&FONT_10X20, COLOR_TITLE);
-    let _ = Text::with_alignment("F A R K L E", Point::new(center_x, layout::title_y(h) + 20), title_style, Alignment::Center).draw(fb);
+    // Title "F A R K L E" — BIG 4× pixel art with golden glow + breathing
+    let breathe = _game.title_breathe;
+    // "F A R K L E" at 4× scale: 6 chars × 20px + 5 spaces × 12px = 180px
+    let title_w = 6 * 20 + 5 * 12;  // 180px
+    let title_x = (w as usize - title_w) / 2;
+    let title_y = layout::title_y(h) as usize + 8;
+
+    let glow_color = Rgb888::new(
+        (0x30 as f32 * breathe) as u8,
+        (0x18 as f32 * breathe) as u8,
+        (0x04 as f32 * breathe) as u8,
+    );
+    let title_color = Rgb888::new(
+        (0xF0 as f32 * breathe) as u8,
+        (0xB0 as f32 * breathe) as u8,
+        (0x40 as f32 * breathe) as u8,
+    );
+    fb.draw_title_big(title_x, title_y, "F A R K L E", title_color, glow_color);
+
     let subtitle_style = MonoTextStyle::new(&FONT_9X15, COLOR_TEXT);
     let _ = Text::with_alignment("A Dice Game for UEFI", Point::new(center_x, layout::title_y(h) + 55), subtitle_style, Alignment::Center).draw(fb);
 
@@ -70,9 +89,9 @@ fn render_title(fb: &mut Framebuffer, _game: &Game, l: &lang::Lang) {
     }
 
     draw_text_center(fb, _game, l.title_start, center_x, dice_y + layout::DIE_SIZE + 30, COLOR_TURN_SCORE, &FONT_9X15);
-    let lang_style = MonoTextStyle::new(&FONT_7X13, Rgb888::new(0x7B, 0x7B, 0xE0));
+    let lang_style = MonoTextStyle::new(&FONT_7X13, Rgb888::new(0x60, 0x60, 0xA0));
     let _ = Text::with_alignment(l.lang_indicator, Point::new(center_x, dice_y + layout::DIE_SIZE + 52), lang_style, Alignment::Center).draw(fb);
-    draw_text_center(fb, _game, l.title_ctrl, center_x, h - 20, Rgb888::new(0x98, 0x98, 0xB8), &FONT_7X13);
+    draw_text_center(fb, _game, l.title_ctrl, center_x, h - 20, Rgb888::new(0x60, 0x60, 0x88), &FONT_7X13);
 }
 
 fn render_player_turn(fb: &mut Framebuffer, game: &Game, phase: TurnPhase, l: &lang::Lang) {
@@ -121,6 +140,40 @@ fn render_player_turn(fb: &mut Framebuffer, game: &Game, phase: TurnPhase, l: &l
     if !game.flash_msg.is_empty() {
         let style = MonoTextStyle::new(&FONT_9X15, COLOR_FARKLE);
         let _ = Text::with_alignment(game.flash_msg, Point::new(w / 2, layout::flash_msg_y(h)), style, Alignment::Center).draw(fb);
+    }
+
+    // ── Floating meld text ──
+    // Shows points/meld name when scored, drifts upward and fades out.
+    if game.meld_display_frames > 0 && game.last_meld_points > 0 {
+        let fade = game.meld_display_frames.min(15) as f32 / 15.0;
+        let drift = (60_i32 - game.meld_display_frames as i32).clamp(0, 20);
+        let text_y = layout::meld_hint_y(h) - 30 - drift;
+        let r = (0xF0 as f32 * fade) as u8;
+        let g = (0xB0 as f32 * fade) as u8;
+        let b = (0x40 as f32 * fade) as u8;
+        let color = Rgb888::new(r, g, b);
+        let mut meld_text = FmtBuf::<64>::new();
+        if game.last_meld_name.is_empty() {
+            let _ = write!(meld_text, "+{}", game.last_meld_points);
+        } else {
+            let _ = write!(meld_text, "{} +{}", game.last_meld_name, game.last_meld_points);
+        }
+        draw_text_center(fb, game, meld_text.as_str(), w / 2, text_y, color, &FONT_9X15_BOLD);
+    }
+
+    // ── Combo counter ──
+    // Shows "×2 COMBO!", "×3 COMBO!" etc. when on a streak
+    if game.combo_streak >= 2 {
+        let combo_y = layout::meld_hint_y(h) - 60;
+        let intensity = game.combo_streak.min(5) as f32 / 5.0;
+        let color = Rgb888::new(
+            (0xF0 as f32 * (0.5 + 0.5 * intensity)) as u8,
+            (0x40 as f32 * intensity) as u8,
+            (0x40 as f32 * (1.0 - intensity)) as u8,
+        );
+        let mut combo_text = FmtBuf::<32>::new();
+        let _ = write!(combo_text, "x{} COMBO!", game.combo_streak);
+        draw_text_center(fb, game, combo_text.as_str(), w / 2, combo_y, color, &FONT_9X15_BOLD);
     }
 
     render_help_bar(fb, w, h);
@@ -183,15 +236,26 @@ fn draw_dice_with_ai_meld(fb: &mut Framebuffer, game: &Game) {
         let is_ai_meld = game.ai_meld_dice[i];
         let value = game.dice[i];
         if is_ai_meld && !is_held {
+            // Balatro-style AI meld highlight: glow halo + amber border
             let s = layout::DIE_SIZE;
-            let _ = Rectangle::new(Point::new(x + 2, y + 2), Size::new(s as u32, s as u32)).draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x0C, 0x0C, 0x1A)), fb);
-            let _ = Rectangle::new(Point::new(x, y), Size::new(s as u32, s as u32)).draw_styled(&PrimitiveStyle::with_fill(COLOR_DICE_FACE), fb);
+            // Glow halo
+            let _ = Rectangle::new(Point::new(x - 3, y - 3), Size::new(s as u32 + 6, s as u32 + 6))
+                .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x30, 0x20, 0x08)), fb);
+            // Shadow
+            let _ = Rectangle::new(Point::new(x + 2, y + 2), Size::new(s as u32, s as u32))
+                .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x06, 0x04, 0x12)), fb);
+            // Face
+            let _ = Rectangle::new(Point::new(x, y), Size::new(s as u32, s as u32))
+                .draw_styled(&PrimitiveStyle::with_fill(COLOR_DICE_FACE), fb);
+            // Amber border
             let border = PrimitiveStyle::with_stroke(COLOR_BUTTON_BANK, 3);
-            let _ = Rectangle::new(Point::new(x, y), Size::new(s as u32, s as u32)).draw_styled(&border, fb);
+            let _ = Rectangle::new(Point::new(x, y), Size::new(s as u32, s as u32))
+                .draw_styled(&border, fb);
             if (1..=6).contains(&value) {
                 let pip_style = PrimitiveStyle::with_fill(COLOR_DICE_PIP);
                 for &(px, py) in layout::pip_positions(value) {
-                    let _ = Circle::new(Point::new(x + px, y + py), layout::PIP_RADIUS).draw_styled(&pip_style, fb);
+                    let _ = Circle::new(Point::new(x + px, y + py), layout::PIP_RADIUS)
+                        .draw_styled(&pip_style, fb);
                 }
             }
         } else {
@@ -230,6 +294,16 @@ fn render_scoreboard(fb: &mut Framebuffer, game: &Game) {
     let h = fb.height() as i32;
     let center_x = w / 2;
     let y = layout::scoreboard_y(h);
+
+    // Balatro-style scoreboard "card" — dark panel with subtle border
+    let panel_w = 320;
+    let panel_h = 52;
+    let panel_x = center_x - panel_w / 2;
+    let _ = Rectangle::new(Point::new(panel_x, y - 6), Size::new(panel_w as u32, panel_h as u32))
+        .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x0E, 0x0A, 0x20)), fb);
+    let _ = Rectangle::new(Point::new(panel_x, y - 6), Size::new(panel_w as u32, panel_h as u32))
+        .draw_styled(&PrimitiveStyle::with_stroke(Rgb888::new(0x28, 0x20, 0x40), 1), fb);
+
     let player_style = MonoTextStyle::new(&FONT_9X15_BOLD, COLOR_TEXT);
     let score_style = MonoTextStyle::new(&FONT_9X15_BOLD, COLOR_TURN_SCORE);
     let small_style = MonoTextStyle::new(&FONT_9X15, COLOR_HELD);
@@ -238,18 +312,22 @@ fn render_scoreboard(fb: &mut Framebuffer, game: &Game) {
     let _ = Text::with_alignment(p0.name, Point::new(center_x - 120, y), player_style, Alignment::Center).draw(fb);
 
     let mut buf = FmtBuf::<32>::new();
-    let _ = write!(buf, "{}", p0.total_score);
+    let _ = write!(buf, "{}", game.display_scores[0]);
     let _ = Text::with_alignment(buf.as_str(), Point::new(center_x - 120, y + 20), score_style, Alignment::Center).draw(fb);
 
     let _ = Text::with_alignment("vs", Point::new(center_x, y + 10), small_style, Alignment::Center).draw(fb);
     let _ = Text::with_alignment(p1.name, Point::new(center_x + 120, y), player_style, Alignment::Center).draw(fb);
 
     let mut buf = FmtBuf::<32>::new();
-    let _ = write!(buf, "{}", p1.total_score);
+    let _ = write!(buf, "{}", game.display_scores[1]);
     let _ = Text::with_alignment(buf.as_str(), Point::new(center_x + 120, y + 20), score_style, Alignment::Center).draw(fb);
 
+    // Active player indicator — gold line with subtle glow
     let active_x = if game.current_player == 0 { center_x - 90 } else { center_x + 30 };
-    let _ = Rectangle::new(Point::new(active_x, y + 36), Size::new(60, 2)).draw_styled(&PrimitiveStyle::with_fill(COLOR_TURN_SCORE), fb);
+    let _ = Rectangle::new(Point::new(active_x - 1, y + 37), Size::new(62, 3))
+        .draw_styled(&PrimitiveStyle::with_fill(Rgb888::new(0x40, 0x28, 0x08)), fb); // glow
+    let _ = Rectangle::new(Point::new(active_x, y + 36), Size::new(60, 2))
+        .draw_styled(&PrimitiveStyle::with_fill(COLOR_TITLE), fb); // gold line
 }
 
 fn render_turn_info(fb: &mut Framebuffer, game: &Game, l: &lang::Lang) {
@@ -294,7 +372,8 @@ fn render_action_buttons(fb: &mut Framebuffer, game: &Game, l: &lang::Lang) {
 }
 
 fn render_help_bar(fb: &mut Framebuffer, w: i32, h: i32) {
-    let style = MonoTextStyle::new(&FONT_7X13, Rgb888::new(0x70, 0x70, 0x98));
+    // Balatro-style muted help text — dim indigo, unobtrusive
+    let style = MonoTextStyle::new(&FONT_7X13, Rgb888::new(0x48, 0x48, 0x70));
     let _ = Text::with_alignment("[arrows]Move  [Space]Pick  [B]Bank  [R]Roll  [Q]Quit  [L]Lang",
         Point::new(w / 2, layout::help_y(h)), style, Alignment::Center).draw(fb);
 }

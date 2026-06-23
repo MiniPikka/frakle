@@ -35,10 +35,8 @@ if [ ! -f "$OVMF_CODE" ]; then
     exit 1
 fi
 
-if [ ! -f "$ESP/EFI/BOOT/BOOTX64.EFI" ]; then
-    echo "Building Farkle..."
-    "$SCRIPT_DIR/build.sh"
-fi
+# Always rebuild to pick up source changes
+"$SCRIPT_DIR/build.sh"
 
 for cmd in mkfs.fat mcopy; do
     if ! command -v "$cmd" &>/dev/null; then

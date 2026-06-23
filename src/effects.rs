@@ -1,11 +1,7 @@
 // Visual effects: particles, screen shake, victory celebration.
 
-use embedded_graphics::{
-    geometry::Point,
-    pixelcolor::Rgb888,
-    prelude::*,
-    primitives::{PrimitiveStyle, Rectangle, StyledDrawable},
-};
+use embedded_graphics::pixelcolor::Rgb888;
+use embedded_graphics::prelude::RgbColor;
 
 use crate::framebuffer::{Framebuffer, COLOR_FARKLE, COLOR_TITLE, COLOR_TURN_SCORE, COLOR_SELECTED, COLOR_BUTTON_ROLL};
 
@@ -41,6 +37,18 @@ pub struct Effects {
     pub shake_frames: u32,
     screen_w: i32,
     screen_h: i32,
+
+    /// Full-screen color flash overlay (fades over `flash_frames` ticks).
+    flash_color: Rgb888,
+    flash_frames: u32,
+    flash_max_frames: u32,
+
+    /// Animated score display: smoothly counts from `anim_score` → actual total.
+    pub anim_scores: [u32; 2],  // per-player animated score
+    pub anim_speed: u32,        // points per frame during animation
+
+    /// Global tick counter — drives title breathing, etc.
+    pub global_tick: u32,
 }
 
 impl Effects {
@@ -51,6 +59,12 @@ impl Effects {
             shake_x: 0, shake_y: 0, shake_frames: 0,
             screen_w: w,
             screen_h: h,
+            flash_color: Rgb888::new(0, 0, 0),
+            flash_frames: 0,
+            flash_max_frames: 1,
+            anim_scores: [0, 0],
+            anim_speed: 30,  // 30 points per frame ≈ 0.5s for 1000pts
+            global_tick: 0,
         }
     }
 
@@ -106,7 +120,42 @@ impl Effects {
     pub fn center_x(&self) -> i32 { self.screen_w / 2 }
     pub fn center_y(&self) -> i32 { self.screen_h / 2 }
 
+    /// Trigger a full-screen color flash overlay.
+    pub fn flash(&mut self, color: Rgb888, frames: u32) {
+        self.flash_color = color;
+        self.flash_frames = frames;
+        self.flash_max_frames = frames;
+    }
+
+    /// Update animated scores toward actual totals. Call each frame.
+    pub fn update_anim_scores(&mut self, actual: &[u32; 2]) {
+        for (i, &target) in actual.iter().enumerate() {
+            if self.anim_scores[i] < target {
+                let diff = target - self.anim_scores[i];
+                let step = diff.min(self.anim_speed);
+                self.anim_scores[i] += step;
+                if self.anim_scores[i] + 2 >= target {
+                    self.anim_scores[i] = target;
+                }
+            } else if self.anim_scores[i] > target {
+                self.anim_scores[i] = target;
+            }
+        }
+    }
+
+    /// Title text breathing value: returns 0.6..1.0 brightness multiplier.
+    /// Creates a smooth pulsing glow on the title text.
+    pub fn title_breathe(&self) -> f32 {
+        // Integer sin-approximation: triangle wave with period ~120 frames (2s)
+        let t = self.global_tick % 120;
+        let phase = if t < 60 { t } else { 120 - t } as f32;
+        0.6 + 0.4 * (phase / 60.0)  // 0.6..1.0
+    }
+
     pub fn tick(&mut self) {
+        self.global_tick = self.global_tick.wrapping_add(1);
+
+        // Advance particles
         let mut j = 0;
         for i in 0..self.particle_count {
             let p = &mut self.particles[i];
@@ -115,14 +164,13 @@ impl Effects {
             p.vy += 0.08;
             p.life -= 1.0;
             if p.life > 0.0 {
-                if j != i {
-                    self.particles[j] = *p;
-                }
+                if j != i { self.particles[j] = *p; }
                 j += 1;
             }
         }
         self.particle_count = j;
 
+        // Advance screen shake
         if self.shake_frames > 0 {
             let intensity = (self.shake_frames as i32).min(8);
             self.shake_x = ((self.shake_frames as i32).wrapping_mul(13) & 0xF) % (intensity * 2 + 1) - intensity;
@@ -132,9 +180,16 @@ impl Effects {
             self.shake_x = 0;
             self.shake_y = 0;
         }
+
+        // Advance flash overlay
+        if self.flash_frames > 0 {
+            self.flash_frames -= 1;
+        }
     }
 
+    /// Render all live particles + flash overlay.
     pub fn render(&self, fb: &mut Framebuffer) {
+        // Particles
         for i in 0..self.particle_count {
             let p = &self.particles[i];
             let alpha = (p.life / p.max_life).clamp(0.0, 1.0);
@@ -145,11 +200,39 @@ impl Effects {
             let color = Rgb888::new(r, g, b);
             let px = p.x as i32 + self.shake_x;
             let py = p.y as i32 + self.shake_y;
-            if px >= 0 && py >= 0 && px < fb.width() as i32 && py < fb.height() as i32 {
-                let size = if p.life > p.max_life * 0.6 { 2 } else { 1 };
-                let _ = Rectangle::new(
-                    Point::new(px, py), Size::new(size, size),
-                ).draw_styled(&PrimitiveStyle::with_fill(color), fb);
+            if p.life > p.max_life * 0.6 {
+                fb.set_pixel(px, py, color);
+                fb.set_pixel(px + 1, py, color);
+                fb.set_pixel(px, py + 1, color);
+                fb.set_pixel(px + 1, py + 1, color);
+            } else {
+                fb.set_pixel(px, py, color);
+            }
+        }
+
+        // Full-screen flash overlay (additive blend, fading out)
+        if self.flash_frames > 0 {
+            let fade = self.flash_frames;
+            let max = self.flash_max_frames.max(1);
+            let intensity = (fade * 16 / max).min(16);  // 0..16
+            if intensity > 0 {
+                let fr = self.flash_color.r() as u32 * intensity / 16;
+                let fg = self.flash_color.g() as u32 * intensity / 16;
+                let fb_c = self.flash_color.b() as u32 * intensity / 16;
+                let w = fb.width();
+                let h = fb.height();
+                let buf = fb.buffer_direct();
+                for y in 0..h {
+                    let row_start = y * w;
+                    for x in 0..w {
+                        let px = buf[row_start + x];
+                        let b = ((px & 0xFF) + fb_c).min(255);
+                        let g = (((px >> 8) & 0xFF) + fg).min(255);
+                        let r = (((px >> 16) & 0xFF) + fr).min(255);
+                        buf[row_start + x] = b | (g << 8) | (r << 16);
+                    }
+                }
+                fb.mark_dirty();
             }
         }
     }

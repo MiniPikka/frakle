@@ -21,6 +21,9 @@ cargo build --release --target x86_64-unknown-uefi
 
 mkdir -p esp/EFI/BOOT esp/EFI/Farkle
 
+# Always remove old binary so run-qemu.sh picks up the new build
+rm -f esp/EFI/BOOT/BOOTX64.EFI esp/EFI/Farkle/Farkle.efi
+
 # Copy the UEFI application
 cp target/x86_64-unknown-uefi/release/frakle.efi esp/EFI/BOOT/BOOTX64.EFI
 cp target/x86_64-unknown-uefi/release/frakle.efi esp/EFI/Farkle/Farkle.efi

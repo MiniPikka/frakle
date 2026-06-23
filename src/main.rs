@@ -9,7 +9,7 @@ use uefi::proto::console::gop::GraphicsOutput;
 use uefi::proto::console::text::Input;
 use embedded_graphics::pixelcolor::Rgb888;
 
-use frakle::framebuffer::Framebuffer;
+use frakle::framebuffer::{Framebuffer, COLOR_FARKLE, COLOR_TURN_SCORE, COLOR_TITLE};
 use frakle::game::{Game, GamePhase, TurnPhase, ai_decide, AiAction};
 use frakle::input::{poll_input, GameInput};
 use frakle::ui::render;
@@ -18,6 +18,7 @@ use frakle::sound::SoundQueue;
 use frakle::sound;
 use frakle::logger;
 use frakle::FmtBuf;
+use frakle::background::Background;
 
 const FRAME_DELAY_US: u64 = 16_000;
 const PHASE_TIMEOUT_FRAMES: u32 = 600; // ~10 seconds at 60fps
@@ -27,9 +28,14 @@ struct SimpleRng { state: u64 }
 impl SimpleRng {
     fn new(seed: u64) -> Self { Self { state: seed } }
     fn next(&mut self) -> u32 {
+        // xorshift64 — the classic Marsaglia shift-xor sequence.
         self.state ^= self.state >> 12;
         self.state ^= self.state << 25;
         self.state ^= self.state >> 27;
+        // Weyl sequence increment: breaks up any fixed-point patterns and
+        // guarantees the state never permanently degenerates to zero.
+        // Unlike OR with a bitmask, addition preserves full entropy in all bits.
+        self.state = self.state.wrapping_add(0x6A09E667F3BCC909);
         (self.state.wrapping_mul(0x2545F4914F6CDD1D) >> 32) as u32
     }
     fn next_die(&mut self) -> u8 { (self.next() % 6 + 1) as u8 }
@@ -77,29 +83,33 @@ fn phase_kind(p: &GamePhase) -> u8 {
     }
 }
 
-/// Try to switch GOP to a 16:9 resolution (1280x720 or higher).
-/// Falls back to the largest available mode ≥1024 wide.
+/// Try to switch GOP to the best resolution for readable fonts.
+///
+/// We cap at 1024×768 because our fonts are fixed-pixel-size (5×7, 9×15,
+/// 10×20). At 1920×1080 these become tiny and unreadable. 1024×768 gives
+/// a good balance of screen real estate and text legibility.
+///
+/// Prefers 4:3 modes (QEMU -vga std offers 640×480..1600×1200).
 fn try_set_hires(gop: &mut GraphicsOutput, bs: &BootServices) {
+    const MAX_W: usize = 1024;
+    const MAX_H: usize = 768;
+
     let (cur_w, cur_h) = gop.current_mode_info().resolution();
+    // Already at or above target — don't change
+    if cur_w >= MAX_W && cur_h >= MAX_H { return; }
+
     let mut best_w = 0usize;
     let mut best_h = 0usize;
-    let mut best_is_wide = false;
     for mode in gop.modes(bs) {
         let (w, h) = mode.info().resolution();
-        if w < 1024 { continue; }
+        // Skip modes larger than our cap (fonts would be too small)
+        if w > MAX_W || h > MAX_H { continue; }
+        // Skip tiny modes
+        if w < 640 || h < 480 { continue; }
         let pixels = w * h;
-        let is_wide = (w * 9).abs_diff(h * 16) < w || (w * 10).abs_diff(h * 16) < w * 2;
-        let dominated = if is_wide && !best_is_wide {
-            true
-        } else if is_wide == best_is_wide {
-            pixels > best_w * best_h
-        } else {
-            false
-        };
-        if dominated {
+        if pixels > best_w * best_h {
             best_w = w;
             best_h = h;
-            best_is_wide = is_wide;
         }
     }
     if best_w > cur_w || best_h > cur_h {
@@ -140,18 +150,19 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let mut rng = SimpleRng::new(seed);
     let mut effects = Effects::new(width as i32, height as i32);
     let mut snd = SoundQueue::new();
+    let mut bg = Background::new();
 
     logger::log(image, bs, "Game objects initialized");
     logger::log_memory_usage(image, bs, core::mem::size_of::<Game>());
 
     let mut frame_count: u32 = 0;
-    let mut phase_frames: u32 = 0;
+    let mut phase_frames: u32 = 0;  // wrapping: phase transitions reset this
     let mut prev_phase_kind: u8 = phase_kind(&game.phase);
     let mut max_consecutive: u32 = 0;
 
     loop {
-        frame_count += 1;
-        phase_frames += 1;
+        frame_count = frame_count.wrapping_add(1);
+        phase_frames = phase_frames.wrapping_add(1);
 
         // Phase timeout watchdog — flash red warning
         let stuck = phase_frames > PHASE_TIMEOUT_FRAMES;
@@ -189,7 +200,7 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
             let _ = write!(pb, "{}", phase_short(&game.phase));
             logger::log_game_state(image, bs, pb.as_str(),
                 game.current_player,
-                game.players[game.current_player].total_score,
+                game.current_player().total_score,
                 game.turn_score, &game.dice, &game.held_dice);
             prev_phase_kind = cur_kind;
             phase_frames = 0;
@@ -206,17 +217,27 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
             game.flash_frames -= 1;
             if game.flash_frames == 0 { game.flash_msg = ""; }
         }
+        if game.meld_display_frames > 0 {
+            game.meld_display_frames -= 1;
+        }
 
         effects.tick();
         snd.tick();
-        render(&mut fb, &game);
-        effects.render(&mut fb);
+        effects.update_anim_scores(&[game.players[0].total_score, game.players[1].total_score]);
+        game.display_scores = effects.anim_scores;
+        game.title_breathe = effects.title_breathe();
+        bg.render(&mut fb);     // animated Balatro background (replaces clear)
+        render(&mut fb, &game); // UI elements on top
+        effects.render(&mut fb); // particles on top
+        fb.apply_scanlines();   // CRT post-process: darken every other row
 
-        // ── Debug overlay (top-left) ──
-        // Frame + phase + scores + watchdog status — all stack-allocated
+        // ── Debug overlay (top-left, 2× scaled) ──
+        // Version marker — confirms the new build is running (bright magenta)
+        fb.draw_text_small_2x(10, 6, "BALATRO BUILD", Rgb888::new(255, 0, 255));
+
         let mut overlay = FmtBuf::<128>::new();
         let _ = write!(overlay, "F:{} {}", frame_count, phase_short(&game.phase));
-        fb.draw_text_small(10, 10, overlay.as_str(), Rgb888::new(0, 255, 0));
+        fb.draw_text_small_2x(10, 30, overlay.as_str(), Rgb888::new(0, 255, 0));
 
         let mut score_buf = FmtBuf::<64>::new();
         let _ = write!(score_buf, "P0:{} P1:{} T:{}",
@@ -224,13 +245,13 @@ fn main(image: Handle, mut system_table: SystemTable<Boot>) -> Status {
             game.players[1].total_score,
             game.turn_score
         );
-        fb.draw_text_small(10, 20, score_buf.as_str(), Rgb888::new(255, 255, 0));
+        fb.draw_text_small_2x(10, 54, score_buf.as_str(), Rgb888::new(255, 255, 0));
 
         // Watchdog status line
         if stuck {
             let mut wd = FmtBuf::<64>::new();
             let _ = write!(wd, "STUCK! {}f max:{}", phase_frames, max_consecutive);
-            fb.draw_text_small(10, 32, wd.as_str(), Rgb888::new(255, 0, 0));
+            fb.draw_text_small_2x(10, 78, wd.as_str(), Rgb888::new(255, 0, 0));
         }
 
         fb.present(&mut gop);
@@ -326,7 +347,9 @@ fn handle_rolling(
     if frames >= frame_count {
         if game.is_farkle() {
             game.turn_score = 0;
+            game.combo_streak = 0;  // reset combo on farkle
             fx.spawn_farkle(fx.center_x(), fx.center_y());
+            fx.flash(COLOR_FARKLE, 15);
             snd.play(sound::SND_FARKLE);
             game.phase = GamePhase::PlayerTurn(TurnPhase::Farkle { frames: 0 });
         } else {
@@ -356,12 +379,30 @@ fn handle_selecting(
                 game.apply_selection();
                 let scored = game.turn_score;
                 game.bank_score();
+                game.combo_streak += 1;
+                // Show meld name floating text
+                game.last_meld_points = scored;
+                game.meld_display_frames = 60;
+                // Scale effects by combo level
+                let combo = game.combo_streak.min(5);
                 fx.spawn_score_pop(fx.center_x(), fx.center_y(), scored);
+                // Extra particles for combos
+                for _ in 1..combo {
+                    fx.spawn_score_pop(fx.center_x() + (combo as i32 * 20 - 40), fx.center_y(), scored);
+                }
+                fx.flash(COLOR_TURN_SCORE, (8 + combo * 3).min(25));
                 snd.play(sound::SND_BANK);
+                check_milestones(game, fx);
                 game.phase = GamePhase::PlayerTurn(TurnPhase::Banking { frames: 0 });
             } else if game.turn_score > 0 {
                 game.bank_score();
+                game.combo_streak += 1;
+                game.last_meld_points = game.turn_score;
+                game.meld_display_frames = 60;
+                let combo = game.combo_streak.min(5);
+                fx.flash(COLOR_TURN_SCORE, (8 + combo * 3).min(25));
                 snd.play(sound::SND_BANK);
+                check_milestones(game, fx);
                 game.phase = GamePhase::PlayerTurn(TurnPhase::Banking { frames: 0 });
             } else {
                 flash(game, "Select scoring dice (1s/5s), then B or R");
@@ -370,8 +411,19 @@ fn handle_selecting(
         GameInput::Roll => {
             if game.check_selection_is_valid_meld().is_some() {
                 game.apply_selection();
-                if game.held_dice.iter().all(|&h| h) { game.held_dice = [false; 6]; }
-                fx.spawn_score_pop(fx.center_x(), fx.center_y(), game.turn_score);
+                if game.held_dice.iter().all(|&h| h) {
+                    game.held_dice = [false; 6];
+                    // HOT DICE! All 6 scored — special celebration
+                    game.last_meld_name = "HOT DICE!";
+                    game.last_meld_points = game.turn_score;
+                    game.meld_display_frames = 90;
+                    fx.spawn_score_pop(fx.center_x(), fx.center_y(), game.turn_score);
+                    fx.spawn_score_pop(fx.center_x() - 60, fx.center_y() - 20, 0);
+                    fx.spawn_score_pop(fx.center_x() + 60, fx.center_y() - 20, 0);
+                    fx.flash(COLOR_TITLE, 20);
+                } else {
+                    fx.spawn_score_pop(fx.center_x(), fx.center_y(), game.turn_score);
+                }
                 game.roll_dice(&mut || rng.next_die());
                 snd.play(sound::SND_ROLL);
                 game.phase = GamePhase::PlayerTurn(TurnPhase::Rolling { frames: 0, frame_count: 30 });
@@ -465,6 +517,7 @@ fn handle_player_turn_end(game: &mut Game, rng: &mut SimpleRng, fx: &mut Effects
     if let Some(winner) = game.check_game_over() {
         game.winner = Some(winner);
         fx.spawn_victory();
+        fx.flash(COLOR_TITLE, 25);
         snd.play(sound::SND_VICTORY);
         game.phase = GamePhase::GameOver;
     } else {
@@ -478,6 +531,7 @@ fn handle_ai_turn_end(game: &mut Game, fx: &mut Effects, snd: &mut SoundQueue) {
     if let Some(winner) = game.check_game_over() {
         game.winner = Some(winner);
         fx.spawn_victory();
+        fx.flash(COLOR_TITLE, 25);
         snd.play(sound::SND_VICTORY);
         game.phase = GamePhase::GameOver;
     } else {
@@ -508,6 +562,36 @@ fn flash(game: &mut Game, msg: &'static str) {
     game.flash_frames = 45;
 }
 
+/// Check if the current player just crossed a 1000-point milestone.
+/// Triggers escalating celebration effects.
+fn check_milestones(game: &mut Game, fx: &mut Effects) {
+    let score = game.current_player().total_score;
+    let thresholds = [1000u32, 2000, 3000, 4000];
+    for (i, &thresh) in thresholds.iter().enumerate() {
+        if score >= thresh && !game.milestones_hit[i] {
+            game.milestones_hit[i] = true;
+            // Escalating celebration: more particles + brighter flash per milestone
+            let intensity = (i + 1) as i32;
+            for j in 0..intensity + 2 {
+                fx.spawn_score_pop(
+                    fx.center_x() + j * 30 - intensity * 15,
+                    fx.center_y() - 20,
+                    0,
+                );
+            }
+            fx.flash(COLOR_TITLE, (15 + i as u32 * 5).min(30));
+            game.last_meld_name = match i {
+                0 => "1000!",
+                1 => "2000!",
+                2 => "3000!",
+                _ => "4000!",
+            };
+            game.last_meld_points = score;
+            game.meld_display_frames = 90;
+        }
+    }
+}
+
 // ── Panic handler ──────────────────────────────────────────────────────────
 // The default uefi panic handler calls ResetType::SHUTDOWN, which makes QEMU
 // exit with no visible message. We override it to dump the panic location and
@@ -529,10 +613,30 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     } else {
         serial_panic_str("(non-str panic message)\n");
     }
-    serial_panic_str(">> end panic, halting\n");
+    // Attempt 8042 keyboard controller reset so QEMU exits cleanly.
+    // If firmware is gone, the outb is harmless — we fall through to hlt.
+    unsafe {
+        serial_panic_str(">> attempting 8042 reset...\n");
+        // Drain 8042 output buffer
+        let mut spins = 0u32;
+        while spins < 100_000 {
+            let status: u8;
+            core::arch::asm!("in al, 0x64", out("al") status, options(nomem, nostack, preserves_flags));
+            if status & 0x02 == 0 { break; }
+            let _: u8;
+            core::arch::asm!("in al, 0x60", out("al") _, options(nomem, nostack, preserves_flags));
+            spins += 1;
+        }
+        // Send reset command (0xFE) to 8042 command port
+        core::arch::asm!("out 0x64, al", in("al") 0xFEu8, options(nomem, nostack, preserves_flags));
+        // Brief pause for the reset to take effect
+        for _ in 0..100_000 {
+            core::arch::asm!("pause", options(nomem, nostack, preserves_flags));
+        }
+    }
 
-    // Halt forever — do NOT shutdown, so QEMU stays open and the serial log
-    // is fully flushed before the process can exit.
+    // If reset didn't work, halt forever so serial log is fully flushed.
+    serial_panic_str(">> reset failed, halting\n");
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
     }
@@ -540,6 +644,11 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 /// Write a byte to COM1 THR (transmit holding register), waiting for the
 /// THR-empty bit first. Polling-only, no UEFI calls — safe from panic context.
+///
+/// # Safety
+/// Directly accesses I/O port 0x3F8 (COM1). Valid on x86 systems with a
+/// standard 16550-compatible UART. The bounded spin prevents infinite hang
+/// on missing/disconnected UART hardware.
 #[inline]
 unsafe fn serial_putc(b: u8) {
     const COM1: u16 = 0x3F8;
